@@ -944,19 +944,28 @@ public class MassDeleteActivity extends Activity implements MassDeleteAdapter.On
                     }
 
                     boolean moveSuccess = false;
-                    boolean isSourceOnSd = StorageUtils.isFileOnSdCard(context, sourceFile);
 
-                    if (isSourceOnSd) {
+                    // First, try a simple rename. This is fast and will work for same-volume moves.
+                    if (sourceFile.renameTo(destFile)) {
+                        moveSuccess = true;
+                    } else {
+                        // If rename fails, it's likely a cross-volume move. Fall back to copy-then-delete.
+                        Log.w(TAG, "renameTo failed for " + sourceFile.getAbsolutePath() + ". Falling back to copy-delete.");
                         if (copyFile(sourceFile, destFile)) {
+                            // Copy was successful, now delete the original.
                             if (StorageUtils.deleteFile(context, sourceFile)) {
                                 moveSuccess = true;
                             } else {
+                                // CRITICAL: If the original can't be deleted, we must delete the copy
+                                // to avoid duplicating the file.
+                                Log.e(TAG, "Failed to delete original file " + sourceFile.getAbsolutePath() + " after copy. Deleting copied file to prevent duplication.");
                                 destFile.delete();
+                                moveSuccess = false;
                             }
-                        }
-                    } else {
-                        if (sourceFile.renameTo(destFile)) {
-                            moveSuccess = true;
+                        } else {
+                            // The copy operation failed.
+                            Log.e(TAG, "Copy-delete fallback failed to copy file: " + sourceFile.getAbsolutePath());
+                            moveSuccess = false;
                         }
                     }
 
