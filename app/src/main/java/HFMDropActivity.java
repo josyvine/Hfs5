@@ -73,6 +73,11 @@ public class HFMDropActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         ThemeManager.applyTheme(this);
         super.onCreate(savedInstanceState);
+        
+        // --- THIS IS THE UPDATE ---
+        // Set the custom exception handler to catch any crashes in this activity.
+        Thread.setDefaultUncaughtExceptionHandler(new MyExceptionHandler(this));
+        
         setContentView(R.layout.activity_hfm_drop);
 
         initializeViews();
