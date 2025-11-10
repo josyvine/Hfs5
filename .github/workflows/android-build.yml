@@ -6,7 +6,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest  # Fixed typo: Ubuntu-latest -> ubuntu-latest
+    runs-on: Ubuntu-latest 
 
     steps:
       - name: Checkout code
@@ -23,7 +23,7 @@ jobs:
         with:
           gradle-version: '8.0'
           cache-disabled: true
-          arguments: app:assembleDebug --info  # Added --info for resolution logs
+          arguments: app:assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
