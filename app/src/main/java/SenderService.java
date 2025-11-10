@@ -163,6 +163,10 @@ public class SenderService extends Service {
         dropRequest.put("senderLocalPort", server.getListeningPort());
         dropRequest.put("timestamp", System.currentTimeMillis());
         dropRequest.put("receiverId", null);
+        
+        // --- NEW: Add empty fields for the receiver to fill in ---
+        dropRequest.put("receiverPublicIp", null);
+        dropRequest.put("receiverPublicPort", null);
 
         db.collection("drop_requests")
                 .add(dropRequest)
@@ -185,7 +189,7 @@ public class SenderService extends Service {
                     }
                 });
     }
-
+    
     private void broadcastStatus(String major, String minor, int progress, int max, long bytes) {
         Intent intent = new Intent(DropProgressActivity.ACTION_UPDATE_STATUS);
         intent.putExtra(DropProgressActivity.EXTRA_STATUS_MAJOR, major);
@@ -195,23 +199,20 @@ public class SenderService extends Service {
         intent.putExtra(DropProgressActivity.EXTRA_BYTES_TRANSFERRED, bytes);
         LocalBroadcastManager.getInstance(this).sendBroadcast(intent);
     }
-
+    
     private void broadcastComplete() {
         Intent intent = new Intent(DropProgressActivity.ACTION_TRANSFER_COMPLETE);
         LocalBroadcastManager.getInstance(this).sendBroadcast(intent);
     }
 
     private void broadcastError(String message) {
-        // --- THIS IS THE FIX ---
-        // Both activities now listen for the same error action and extra.
         Intent errorIntent = new Intent(DownloadService.ACTION_DOWNLOAD_ERROR);
         errorIntent.putExtra(DownloadService.EXTRA_ERROR_MESSAGE, message);
         LocalBroadcastManager.getInstance(this).sendBroadcast(errorIntent);
 
-        // Also notify the DropProgressActivity that an error occurred to update its UI state.
         LocalBroadcastManager.getInstance(this).sendBroadcast(new Intent(DropProgressActivity.ACTION_TRANSFER_ERROR));
     }
-
+    
     private String getStackTraceAsString(Exception e) {
         StringWriter sw = new StringWriter();
         PrintWriter pw = new PrintWriter(sw);
@@ -232,9 +233,30 @@ public class SenderService extends Service {
                 if (snapshot != null && snapshot.exists()) {
                     String status = snapshot.getString("status");
                     Log.d(TAG, "Drop request status changed to: " + status);
+
+                    // --- THIS IS THE NEW LOGIC FOR TCP HOLE PUNCHING ---
+                    // When the receiver accepts and updates the document with their IP,
+                    // the sender will see it and try to connect back.
                     if ("accepted".equals(status)) {
+                        String receiverIp = snapshot.getString("receiverPublicIp");
+                        Long receiverPortLong = snapshot.getLong("receiverPublicPort");
+
+                        if (receiverIp != null && receiverPortLong != null && receiverPortLong != 0) {
+                            final String finalReceiverIp = receiverIp;
+                            final int finalReceiverPort = receiverPortLong.intValue();
+                            
+                            // Start the "punch" attempt on a new thread
+                            new Thread(new Runnable() {
+                                @Override
+                                public void run() {
+                                    punchHole(finalReceiverIp, finalReceiverPort);
+                                }
+                            }).start();
+                        }
+                        
                         updateNotification("Receiver connected. Transferring...", true);
                         broadcastStatus("Transferring...", "Sending file data...", -1, -1, -1);
+
                     } else if ("declined".equals(status)) {
                         stopServiceAndCleanup("Receiver declined the transfer.");
                     } else if ("complete".equals(status)) {
@@ -252,6 +274,30 @@ public class SenderService extends Service {
                 }
             }
         });
+    }
+
+    // --- NEW: Method to perform the TCP Hole Punch ---
+    private void punchHole(String receiverIp, int receiverPort) {
+        Socket punchSocket = null;
+        try {
+            // We create a new socket and try to connect. This is the "punch".
+            // We expect this to fail, and that is okay. Its only purpose is
+            // to create a temporary rule in the sender's NAT/firewall.
+            Log.d(TAG, "Attempting to punch hole to " + receiverIp + ":" + receiverPort);
+            punchSocket = new Socket(receiverIp, receiverPort);
+            Log.d(TAG, "Hole punch connection succeeded (this is rare).");
+        } catch (IOException e) {
+            // This is the expected outcome. The error is ignored.
+            Log.d(TAG, "Hole punch connection failed as expected: " + e.getMessage());
+        } finally {
+            if (punchSocket != null) {
+                try {
+                    punchSocket.close();
+                } catch (IOException e) {
+                    // Ignore
+                }
+            }
+        }
     }
 
     private String generateUsernameFromUid(String uid) {
@@ -288,7 +334,7 @@ public class SenderService extends Service {
         if (cloakedFile != null && cloakedFile.exists()) {
             cloakedFile.delete();
         }
-
+        
         if (dropRequestId != null) {
             db.collection("drop_requests").document(dropRequestId).get().addOnCompleteListener(new OnCompleteListener<DocumentSnapshot>() {
                 @Override
@@ -402,7 +448,7 @@ public class SenderService extends Service {
 
                 String line = in.readLine();
                 if (line == null || !line.startsWith("GET")) {
-                    return;
+                    return; 
                 }
 
                 long rangeStart = 0;
@@ -463,7 +509,7 @@ public class SenderService extends Service {
                     bytesRemaining -= bytesRead;
                 }
                 out.flush();
-
+                
             } catch (IOException e) {
                 Log.e(TAG, "Error handling client request", e);
             } finally {
@@ -478,7 +524,7 @@ public class SenderService extends Service {
             }
         }
     }
-
+    
     private static class StunClient {
         private static final String STUN_SERVER = "stun.l.google.com";
         private static final int STUN_PORT = 19302;
@@ -526,11 +572,11 @@ public class SenderService extends Service {
         }
 
         private static StunResult parseStunResponse(byte[] data, int length) {
-            if (length < 20 || data[0] != 0x01 || data[1] != 0x01) {
+            if (length < 20 || data[0] != 0x01 || data[1] != 0x01) { 
                 return null;
             }
 
-            int i = 20;
+            int i = 20; 
             while (i < length) {
                 int type = ((data[i] & 0xFF) << 8) | (data[i + 1] & 0xFF);
                 int attrLength = ((data[i + 2] & 0xFF) << 8) | (data[i + 3] & 0xFF);
@@ -562,8 +608,8 @@ public class SenderService extends Service {
                         }
                     }
                 }
-                i += 4 + attrLength;
-                if (attrLength % 4 != 0) {
+                i += 4 + attrLength; 
+                if (attrLength % 4 != 0) { 
                     i += (4 - (attrLength % 4));
                 }
             }
