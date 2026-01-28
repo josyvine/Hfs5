@@ -293,6 +293,7 @@ public class MassDeleteActivity extends Activity implements MassDeleteAdapter.On
         File externalStorage = Environment.getExternalStorageDirectory();
 
         List<File> rootsToScan = new ArrayList<>();
+        // Standard User 0 paths
         rootsToScan.add(new File(externalStorage, "WhatsApp"));
         rootsToScan.add(new File(externalStorage, "Android/media/com.whatsapp/WhatsApp"));
         rootsToScan.add(new File(externalStorage, "Download"));
@@ -300,6 +301,23 @@ public class MassDeleteActivity extends Activity implements MassDeleteAdapter.On
         rootsToScan.add(new File(externalStorage, "DCIM"));
         rootsToScan.add(new File(externalStorage, "Pictures"));
         rootsToScan.add(new File(externalStorage, "DCIM/Camera"));
+
+        // --- ADDED: Support for Cloned Apps (User 999 and User 10) ---
+        // Dual Messenger usually uses user 999
+        File dualAppStorage = new File("/storage/emulated/999");
+        if (dualAppStorage.exists() && dualAppStorage.canRead()) {
+             rootsToScan.add(new File(dualAppStorage, "WhatsApp"));
+             rootsToScan.add(new File(dualAppStorage, "Android/media/com.whatsapp/WhatsApp"));
+             rootsToScan.add(new File(dualAppStorage, "DCIM"));
+             rootsToScan.add(new File(dualAppStorage, "Download"));
+        }
+        
+        // Some devices use user 10
+        File parallelAppStorage = new File("/storage/emulated/10");
+        if (parallelAppStorage.exists() && parallelAppStorage.canRead()) {
+             rootsToScan.add(new File(parallelAppStorage, "WhatsApp"));
+             rootsToScan.add(new File(parallelAppStorage, "DCIM"));
+        }
 
         for (File root : rootsToScan) {
             if (root.exists() && root.isDirectory()) {
