@@ -19,12 +19,16 @@ import androidx.fragment.app.Fragment;
 
 import com.hfs.security.databinding.FragmentSettingsBinding;
 import com.hfs.security.receivers.AdminReceiver;
+import com.hfs.security.ui.FaceSetupActivity;
 import com.hfs.security.ui.SplashActivity;
 import com.hfs.security.utils.HFSDatabaseHelper;
 
 /**
- * Advanced Settings Screen (Phase 7 & 8).
- * Manages Master PIN, Trusted Number, Anti-Uninstall, and Stealth Mode.
+ * Advanced Settings Screen.
+ * 1. Manages Customizable Dial Code / Secret PIN.
+ * 2. Manages Trusted Alert Number.
+ * 3. Handles Face Re-scan logic.
+ * 4. Manages Stealth Mode and Anti-Uninstall.
  */
 public class SettingsFragment extends Fragment {
 
@@ -36,6 +40,7 @@ public class SettingsFragment extends Fragment {
     @Nullable
     @Override
     public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container, @Nullable Bundle savedInstanceState) {
+        // Initialize ViewBinding
         binding = FragmentSettingsBinding.inflate(inflater, container, false);
         return binding.getRoot();
     }
@@ -45,90 +50,98 @@ public class SettingsFragment extends Fragment {
         super.onViewCreated(view, savedInstanceState);
         db = HFSDatabaseHelper.getInstance(requireContext());
         
-        // Initialize Device Admin components
+        // Initialize Device Admin components for Anti-Uninstall
         devicePolicyManager = (DevicePolicyManager) requireContext().getSystemService(Context.DEVICE_POLICY_SERVICE);
         adminComponent = new ComponentName(requireContext(), AdminReceiver.class);
 
-        loadCurrentSettings();
-        setupListeners();
+        loadSavedData();
+        setupClickListeners();
     }
 
     /**
-     * Populates the UI with currently saved security configurations.
+     * Pulls the user-customized settings from the database.
      */
-    private void loadCurrentSettings() {
+    private void loadSavedData() {
+        // Field 1: The phone number that receives alerts
         binding.etTrustedNumber.setText(db.getTrustedNumber());
+        
+        // Field 2: The customizable PIN used for SMS commands AND the Dialer
         binding.etSecretPin.setText(db.getMasterPin());
         
-        // Check if Anti-Uninstall (Device Admin) is active
+        // Anti-Uninstall Status
         boolean isAdminActive = devicePolicyManager.isAdminActive(adminComponent);
         binding.switchAntiUninstall.setChecked(isAdminActive);
 
-        // Load feature toggles
+        // Stealth and Fake Gallery Toggles
         binding.switchStealthMode.setChecked(db.isStealthModeEnabled());
         binding.switchFakeGallery.setChecked(db.isFakeGalleryEnabled());
     }
 
-    private void setupListeners() {
-        // 1. Save Core Security Credentials
-        binding.btnSaveSettings.setOnClickListener(v -> saveCoreCredentials());
+    private void setupClickListeners() {
+        // SAVE BUTTON: Saves the Trusted Number and the Custom Dial Code
+        binding.btnSaveSettings.setOnClickListener(v -> {
+            String number = binding.etTrustedNumber.getText().toString().trim();
+            String pin = binding.etSecretPin.getText().toString().trim();
 
-        // 2. Anti-Uninstall Toggle (Device Admin)
-        binding.switchAntiUninstall.setOnCheckedChangeListener((buttonView, isChecked) -> {
-            if (isChecked) {
-                activateDeviceAdmin();
-            } else {
-                deactivateDeviceAdmin();
+            if (TextUtils.isEmpty(number) || pin.length() < 4) {
+                Toast.makeText(getContext(), "Please enter a valid Phone Number and 4-digit PIN", Toast.LENGTH_SHORT).show();
+                return;
             }
+
+            // Save values - The PIN saved here is what the Dialer will now look for
+            db.saveTrustedNumber(number);
+            db.saveMasterPin(pin);
+            Toast.makeText(getContext(), "Security Credentials Updated Successfully", Toast.LENGTH_SHORT).show();
         });
 
-        // 3. Stealth Mode Toggle (Hiding App Icon)
+        // RESCAN BUTTON: Fixed to actually open the Face Registration screen
+        binding.btnRescanFace.setOnClickListener(v -> {
+            Intent intent = new Intent(requireActivity(), FaceSetupActivity.class);
+            startActivity(intent);
+        });
+
+        // STEALTH MODE: Hides icon and explains the custom dial logic
         binding.switchStealthMode.setOnCheckedChangeListener((buttonView, isChecked) -> {
             db.setStealthMode(isChecked);
             if (isChecked) {
-                showStealthWarning();
+                showStealthWarningDialog();
             } else {
-                toggleAppIcon(true);
+                toggleAppIconVisibility(true);
+                Toast.makeText(getContext(), "App Icon Unhidden", Toast.LENGTH_SHORT).show();
             }
         });
 
-        // 4. Fake Gallery Mode Toggle
+        // ANTI-UNINSTALL: Device Admin logic
+        binding.switchAntiUninstall.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            if (isChecked) {
+                activateAdmin();
+            } else {
+                deactivateAdmin();
+            }
+        });
+
+        // DECOY SYSTEM: Fake Gallery Toggle
         binding.switchFakeGallery.setOnCheckedChangeListener((buttonView, isChecked) -> {
             db.setFakeGalleryEnabled(isChecked);
-            Toast.makeText(getContext(), "Decoy System " + (isChecked ? "Enabled" : "Disabled"), Toast.LENGTH_SHORT).show();
         });
     }
 
-    private void saveCoreCredentials() {
-        String number = binding.etTrustedNumber.getText().toString().trim();
-        String pin = binding.etSecretPin.getText().toString().trim();
-
-        if (TextUtils.isEmpty(number) || pin.length() < 4) {
-            Toast.makeText(getContext(), "Enter a valid Number and 4-digit PIN", Toast.LENGTH_SHORT).show();
-            return;
-        }
-
-        db.saveTrustedNumber(number);
-        db.saveMasterPin(pin);
-        Toast.makeText(getContext(), "Security Credentials Updated", Toast.LENGTH_SHORT).show();
-    }
-
-    private void activateDeviceAdmin() {
-        Intent intent = new Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN);
-        intent.putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, adminComponent);
-        intent.putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION, "Required to prevent intruders from uninstalling HFS.");
-        startActivity(intent);
-    }
-
-    private void deactivateDeviceAdmin() {
-        devicePolicyManager.removeActiveAdmin(adminComponent);
-        Toast.makeText(getContext(), "Anti-Uninstall Protection Disabled", Toast.LENGTH_SHORT).show();
-    }
-
     /**
-     * Stealth Mode Logic: Completely hides the app from the launcher.
+     * Fixed Dialog: The text is now visible thanks to the Theme fix.
      */
-    private void toggleAppIcon(boolean show) {
+    private void showStealthWarningDialog() {
+        String currentCode = db.getMasterPin();
+        
+        new AlertDialog.Builder(requireContext())
+                .setTitle("Stealth Mode Active")
+                .setMessage("The app icon will be hidden. To open HFS, dial your secret PIN (" + currentCode + ") and press the CALL button.")
+                .setPositiveButton("I UNDERSTAND", (dialog, which) -> toggleAppIconVisibility(false))
+                .setNegativeButton("CANCEL", (dialog, which) -> binding.switchStealthMode.setChecked(false))
+                .setCancelable(false)
+                .show();
+    }
+
+    private void toggleAppIconVisibility(boolean show) {
         PackageManager pm = requireContext().getPackageManager();
         ComponentName componentName = new ComponentName(requireContext(), SplashActivity.class);
         
@@ -138,14 +151,16 @@ public class SettingsFragment extends Fragment {
         pm.setComponentEnabledSetting(componentName, state, PackageManager.DONT_KILL_APP);
     }
 
-    private void showStealthWarning() {
-        new AlertDialog.Builder(requireContext())
-                .setTitle("Stealth Mode Active")
-                .setMessage("The app icon will now be hidden. To open HFS again, dial *#*#7392#*#* in your phone's dialer.")
-                .setPositiveButton("I Understand", (dialog, which) -> toggleAppIcon(false))
-                .setNegativeButton("Cancel", (dialog, which) -> binding.switchStealthMode.setChecked(false))
-                .setCancelable(false)
-                .show();
+    private void activateAdmin() {
+        Intent intent = new Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN);
+        intent.putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, adminComponent);
+        intent.putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION, "Protection against unauthorized uninstallation.");
+        startActivity(intent);
+    }
+
+    private void deactivateAdmin() {
+        devicePolicyManager.removeActiveAdmin(adminComponent);
+        Toast.makeText(getContext(), "Uninstall Protection Disabled", Toast.LENGTH_SHORT).show();
     }
 
     @Override
