@@ -3,26 +3,27 @@
     xmlns:tools="http://schemas.android.com/tools"
     package="com.hfs.security">
 
-    <!-- CRITICAL PERMISSIONS FOR HFS SECURITY -->
-    
-    <!-- 1. Intruder Detection -->
+    <!-- PERMISSIONS FOR SILENT INTRUDER DETECTION -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" />
     <uses-feature android:name="android.hardware.camera.front" />
 
-    <!-- 2. App Monitoring & Lock Screen -->
+    <!-- PERMISSION FOR FINGERPRINT/BIOMETRIC UNLOCK (NEWLY ADDED) -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+
+    <!-- PERMISSIONS FOR APP MONITORING & OVERLAY LOCK -->
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- 3. SMS Alerts & Remote Commands -->
+    <!-- PERMISSIONS FOR SMS ALERTS & REMOTE COMMANDS -->
     <uses-permission android:name="android.permission.SEND_SMS" />
     <uses-permission android:name="android.permission.RECEIVE_SMS" />
     <uses-permission android:name="android.permission.READ_SMS" />
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
 
-    <!-- 4. Persistence & Storage -->
+    <!-- PERMISSIONS FOR SYSTEM PERSISTENCE -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.INTERNET" />
@@ -32,8 +33,6 @@
     <application
         android:name=".HFSApplication"
         android:allowBackup="true"
-        android:dataExtractionRules="@xml/data_extraction_rules"
-        android:fullBackupContent="@xml/backup_rules"
         android:icon="@drawable/hfs"
         android:label="@string/app_name"
         android:roundIcon="@drawable/hfs"
@@ -41,7 +40,7 @@
         android:theme="@style/Theme.HFS"
         tools:targetApi="31">
 
-        <!-- SPLASH SCREEN (Launcher) -->
+        <!-- 1. SPLASH SCREEN (Starting Point) -->
         <activity
             android:name=".ui.SplashActivity"
             android:exported="true"
@@ -52,13 +51,13 @@
             </intent-filter>
         </activity>
 
-        <!-- MAIN DASHBOARD -->
+        <!-- 2. MAIN DASHBOARD (Navigation Host) -->
         <activity
             android:name=".ui.MainActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustResize"/>
 
-        <!-- LOCK SCREEN OVERLAY (Transparent/Floating) -->
+        <!-- 3. LOCK SCREEN OVERLAY (App Blocker) -->
         <activity
             android:name=".ui.LockScreenActivity"
             android:excludeFromRecents="true"
@@ -67,14 +66,14 @@
             android:theme="@style/Theme.HFS.NoActionBar"
             android:windowSoftInputMode="stateAlwaysHidden" />
 
-        <!-- BACKGROUND MONITORING SERVICE -->
+        <!-- 4. BACKGROUND MONITORING SERVICE -->
         <service
             android:name=".services.AppMonitorService"
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
-        <!-- DEVICE ADMIN RECEIVER (Prevent Uninstall) -->
+        <!-- 5. DEVICE ADMIN RECEIVER (Anti-Uninstall) -->
         <receiver
             android:name=".receivers.AdminReceiver"
             android:description="@string/admin_description"
@@ -90,7 +89,7 @@
             </intent-filter>
         </receiver>
 
-        <!-- SMS COMMAND RECEIVER (Remote Lock/Unlock) -->
+        <!-- 6. SMS COMMAND RECEIVER (Remote Lock/Unlock) -->
         <receiver
             android:name=".receivers.SmsCommandReceiver"
             android:enabled="true"
@@ -101,7 +100,7 @@
             </intent-filter>
         </receiver>
 
-        <!-- BOOT RECEIVER (Auto Start) -->
+        <!-- 7. BOOT RECEIVER (Auto-Start after Reboot) -->
         <receiver
             android:name=".receivers.BootReceiver"
             android:enabled="true"
@@ -112,7 +111,7 @@
             </intent-filter>
         </receiver>
 
-        <!-- STEALTH MODE RECEIVER (Dial *#*#7392#*#*) -->
+        <!-- 8. STEALTH MODE RECEIVER (Dial *#*#7392#*#*) -->
         <receiver
             android:name=".receivers.StealthLaunchReceiver"
             android:exported="true">
@@ -122,7 +121,7 @@
             </intent-filter>
         </receiver>
 
-        <!-- FILE PROVIDER (For sharing logs/photos safely) -->
+        <!-- 9. FILE PROVIDER (Internal Path Access) -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
