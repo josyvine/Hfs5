@@ -1,4 +1,73 @@
-<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">HFM App</string>
+    <!-- General App Info -->
+    <string name="app_name">HFS Security</string>
+    <string name="full_app_name">HFS – Hybrid File Security</string>
+    <string name="tagline">Silent Intruder Protection System</string>
+
+    <!-- Navigation Labels -->
+    <string name="menu_home">Dashboard</string>
+    <string name="menu_protected">Apps</string>
+    <string name="menu_history">Evidence</string>
+    <string name="action_settings">Settings</string>
+    <string name="action_help">Help</string>
+
+    <!-- Dashboard Strings -->
+    <string name="status_active">PROTECTION: ACTIVE</string>
+    <string name="status_inactive">PROTECTION: INACTIVE</string>
+    <string name="btn_start_guard">ACTIVATE SILENT GUARD</string>
+    <string name="btn_stop_guard">DEACTIVATE SYSTEM</string>
+    <string name="summary_protected_apps">%1$d Apps currently protected</string>
+    <string name="view_logs">VIEW INTRUDER LOGS</string>
+
+    <!-- Lock Screen Strings -->
+    <string name="verifying_identity">Verifying Identity...</string>
+    <string name="access_denied">ACCESS DENIED</string>
+    <string name="intrusion_warning">Unauthorized access detected. Evidence has been saved and owner notified.</string>
+    <string name="hint_enter_pin">Enter Master PIN</string>
+    <string name="btn_unlock_pin">UNLOCK WITH PIN</string>
+    <string name="fingerprint_hint">Tap to scan fingerprint</string>
+    <string name="error_wrong_pin">Incorrect Security PIN</string>
+
+    <!-- Settings Strings -->
+    <string name="heading_credentials">Core Security Setup</string>
+    <string name="hint_trusted_number">Trusted Phone Number</string>
+    <string name="hint_secret_pin">Secret SMS PIN (e.g. 7392)</string>
+    <string name="btn_save_data">SAVE SECURITY DATA</string>
+    
+    <string name="heading_protection">Advanced Protection</string>
+    <string name="label_anti_uninstall">Anti-Uninstall Protection</string>
+    <string name="label_stealth_mode">Stealth Mode (Hide Icon)</string>
+    <string name="label_fake_gallery">Fake Gallery (Decoy System)</string>
+    
+    <string name="heading_owner">Owner Identity</string>
+    <string name="label_biometric_data">Biometric Data</string>
+    <string name="btn_rescan">RE-SCAN</string>
+
+    <!-- Device Admin Strings -->
+    <string name="admin_description">HFS requires Device Admin to prevent intruders from uninstalling the security system and to support remote locking.</string>
+
+    <!-- History / Evidence Strings -->
+    <string name="title_evidence">Intrusion Evidence</string>
+    <string name="hint_evidence">Captured photos of unauthorized attempts</string>
+    <string name="btn_clear_all">Clear All</string>
+    <string name="no_intruders_title">No intrusion detected yet</string>
+    <string name="no_intruders_desc">Your files are safe and secure.</string>
+    <string name="delete_confirm_title">Delete Evidence?</string>
+    <string name="delete_confirm_msg">This will permanently remove this intruder photo.</string>
+
+    <!-- Notification Strings -->
+    <string name="notif_channel_name">HFS Security Guard</string>
+    <string name="notif_channel_desc">Ensures the HFS silent intruder detection is active.</string>
+    <string name="notif_title">HFS Silent Guard Active</string>
+    <string name="notif_text">Monitoring protected applications...</string>
+
+    <!-- Stealth Mode Strings -->
+    <string name="stealth_active_title">Stealth Mode Active</string>
+    <string name="stealth_active_msg">The app icon will now be hidden. To open HFS again, dial *#*#7392#*#* in your phone\'s dialer.</string>
+    <string name="btn_understand">I Understand</string>
+
+    <!-- SMS Alert Template -->
+    <string name="sms_alert_header">⚠ ALERT: Someone accessed your %1$s</string>
+    <string name="sms_alert_time">Time: %1$s</string>
+    <string name="sms_alert_action">Action: App locked + Intruder photo saved</string>
 </resources>
