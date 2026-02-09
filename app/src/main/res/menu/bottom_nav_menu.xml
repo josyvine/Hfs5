@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- DASHBOARD TAB -->
+    <item
+        android:id="@+id/nav_home"
+        android:icon="@drawable/ic_dashboard"
+        android:title="@string/menu_home" />
+
+    <!-- PROTECTED APPS TAB -->
+    <item
+        android:id="@+id/nav_protected_apps"
+        android:icon="@drawable/ic_apps"
+        android:title="@string/menu_protected" />
+
+    <!-- EVIDENCE LOGS TAB -->
+    <item
+        android:id="@+id/nav_history"
+        android:icon="@drawable/ic_history"
+        android:title="@string/menu_history" />
+
+</menu>
