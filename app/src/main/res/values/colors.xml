@@ -15,23 +15,33 @@
     <color name="nav_selected">#3D8BFF</color>
     <color name="nav_unselected">#6B7280</color>
 
-    <!-- MISSING COLORS CAUSING BUILD ERROR -->
-    
-    <!-- Amoled Theme Colors -->
+    <!-- Theme Colors - Added in previous step -->
     <color name="amoled_colorPrimary">#3D8BFF</color>
     <color name="amoled_backgroundColor">#000000</color>
     <color name="amoled_textColor">#FFFFFF</color>
     <color name="amoled_headerTextColor">#3D8BFF</color>
 
-    <!-- Dark Theme (dt) Colors -->
     <color name="dt_colorPrimary">#3D8BFF</color>
     <color name="dt_backgroundColor">#0F111A</color>
     <color name="dt_textColor">#FFFFFF</color>
     <color name="dt_headerTextColor">#3D8BFF</color>
 
-    <!-- Light Theme (lt) Colors -->
     <color name="lt_colorPrimary">#2456A5</color>
     <color name="lt_backgroundColor">#FFFFFF</color>
     <color name="lt_textColor">#000000</color>
     <color name="lt_headerTextColor">#2456A5</color>
+    
+    <!-- MISSING COLORS CAUSING NEW BUILD ERROR - ADDED -->
+    
+    <!-- Nordic Theme Colors -->
+    <color name="nordic_colorPrimary">#88C0D0</color>  <!-- Arctic Blue -->
+    <color name="nordic_backgroundColor">#2E3440</color> <!-- Darker Navy -->
+    <color name="nordic_textColor">#ECEFF4</color>       <!-- Snow White -->
+    <color name="nordic_headerTextColor">#88C0D0</color>
+
+    <!-- Solarized Theme Colors -->
+    <color name="solarized_colorPrimary">#268BD2</color> <!-- Blue -->
+    <color name="solarized_backgroundColor">#002B36</color> <!-- Base Dark -->
+    <color name="solarized_textColor">#839496</color>       <!-- Base Light -->
+    <color name="solarized_headerTextColor">#268BD2</color>
 </resources>
