@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 
+      Maps to: /data/user/0/com.hfs.security/files/
+      This is where we store secure logs and intruder photos internally.
+    -->
+    <files-path name="internal_reports" path="." />
+
+    <!-- 
+      Maps to: /storage/emulated/0/Android/data/com.hfs.security/files/
+      This is the external private storage (preferred for larger photos).
+    -->
+    <external-files-path name="external_reports" path="." />
+    
+    <!-- 
+      Maps to: /storage/emulated/0/Android/data/com.hfs.security/intruders/
+      Specific folder for intruder face captures.
+    -->
+    <external-files-path name="intruder_photos" path="intruders/" />
+</paths>
