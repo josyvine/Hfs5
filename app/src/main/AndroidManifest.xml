@@ -2,30 +2,25 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- 1. INTRUDER DETECTION PERMISSIONS -->
+    <!-- CRITICAL PERMISSIONS FOR OPPO DIALER TRIGGER -->
+    <!-- Allows the app to see the number you dial -->
+    <uses-permission android:name="android.permission.PROCESS_OUTGOING_CALLS" />
+    <!-- Required to monitor the phone state during the dial process -->
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    
+    <!-- STANDARD HFS PERMISSIONS -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" />
     <uses-feature android:name="android.hardware.camera.front" />
-
-    <!-- 2. BIOMETRIC/FINGERPRINT PERMISSION -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
 
-    <!-- 3. DIALER STEALTH MODE PERMISSION (For Call Interception) -->
-    <uses-permission android:name="android.permission.PROCESS_OUTGOING_CALLS" />
-
-    <!-- 4. APP MONITORING & OVERLAY PERMISSIONS -->
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-
-    <!-- 5. SMS ALERTS & REMOTE COMMAND PERMISSIONS -->
     <uses-permission android:name="android.permission.SEND_SMS" />
     <uses-permission android:name="android.permission.RECEIVE_SMS" />
     <uses-permission android:name="android.permission.READ_SMS" />
-    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
-
-    <!-- 6. SYSTEM PERSISTENCE PERMISSIONS -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.INTERNET" />
@@ -42,7 +37,7 @@
         android:theme="@style/Theme.HFS"
         tools:targetApi="31">
 
-        <!-- A. SPLASH SCREEN (Starting Point) -->
+        <!-- 1. SPLASH SCREEN (Entry Point) -->
         <activity
             android:name=".ui.SplashActivity"
             android:exported="true"
@@ -53,20 +48,20 @@
             </intent-filter>
         </activity>
 
-        <!-- B. MAIN DASHBOARD (Navigation Host) -->
+        <!-- 2. MAIN DASHBOARD -->
         <activity
             android:name=".ui.MainActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustResize"/>
 
-        <!-- C. FACE SETUP ACTIVITY (For Rescan/Initial Setup) -->
+        <!-- 3. FACE SETUP SCREEN -->
         <activity
             android:name=".ui.FaceSetupActivity"
             android:exported="false"
             android:screenOrientation="portrait"
             android:theme="@style/Theme.HFS.NoActionBar" />
 
-        <!-- D. LOCK SCREEN OVERLAY (App Blocker) -->
+        <!-- 4. LOCK SCREEN OVERLAY -->
         <activity
             android:name=".ui.LockScreenActivity"
             android:excludeFromRecents="true"
@@ -75,14 +70,14 @@
             android:theme="@style/Theme.HFS.LockOverlay"
             android:windowSoftInputMode="stateAlwaysHidden" />
 
-        <!-- E. BACKGROUND MONITORING SERVICE -->
+        <!-- 5. MONITORING SERVICE -->
         <service
             android:name=".services.AppMonitorService"
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
-        <!-- F. DEVICE ADMIN RECEIVER (Anti-Uninstall) -->
+        <!-- 6. DEVICE ADMIN RECEIVER -->
         <receiver
             android:name=".receivers.AdminReceiver"
             android:description="@string/admin_description"
@@ -98,7 +93,7 @@
             </intent-filter>
         </receiver>
 
-        <!-- G. SMS COMMAND RECEIVER (Remote Lock/Unlock) -->
+        <!-- 7. SMS COMMAND RECEIVER -->
         <receiver
             android:name=".receivers.SmsCommandReceiver"
             android:enabled="true"
@@ -109,28 +104,28 @@
             </intent-filter>
         </receiver>
 
-        <!-- H. BOOT RECEIVER (Auto-Start) -->
+        <!-- 8. BOOT RECEIVER -->
         <receiver
             android:name=".receivers.BootReceiver"
             android:enabled="true"
             android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
-                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
             </intent-filter>
         </receiver>
 
-        <!-- I. STEALTH DIALER RECEIVER (Intercepts Call to open app) -->
+        <!-- 9. UPDATED STEALTH DIALER RECEIVER -->
+        <!-- Priority is set to 2147483647 to beat the system dialer -->
         <receiver
             android:name=".receivers.StealthLaunchReceiver"
             android:enabled="true"
             android:exported="true">
-            <intent-filter android:priority="999">
+            <intent-filter android:priority="2147483647">
                 <action android:name="android.intent.action.NEW_OUTGOING_CALL" />
             </intent-filter>
         </receiver>
 
-        <!-- J. FILE PROVIDER (Internal Path Access) -->
+        <!-- 10. FILE PROVIDER -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
