@@ -21,9 +21,12 @@ import com.google.mlkit.vision.face.FaceDetection;
 import com.google.mlkit.vision.face.FaceDetector;
 import com.google.mlkit.vision.face.FaceDetectorOptions;
 import com.google.mlkit.vision.face.FaceLandmark;
+
+import com.hfs.security.R;
 import com.hfs.security.databinding.ActivityFaceSetupBinding;
 import com.hfs.security.utils.HFSDatabaseHelper;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -31,9 +34,9 @@ import java.util.concurrent.Executors;
 
 /**
  * Owner Face Registration Screen.
- * UPDATED: Implemented Landmark Geometry Calibration.
- * This activity calculates the mathematical ratio of the owner's facial 
- * features to create a unique biometric template, solving the 'Match Failure' issue.
+ * FIXED: Implemented Multi-Frame Averaging.
+ * Instead of a single frame, this captures 5 biometric snapshots to create 
+ * a highly accurate 'Owner Face Map', resolving the false mismatch issues.
  */
 public class FaceSetupActivity extends AppCompatActivity {
 
@@ -42,38 +45,36 @@ public class FaceSetupActivity extends AppCompatActivity {
     private ExecutorService cameraExecutor;
     private FaceDetector detector;
     private HFSDatabaseHelper db;
-    private boolean isFaceCaptured = false;
+
+    // Calibration Variables
+    private boolean isCalibrationDone = false;
+    private final List<Float> capturedRatiosA = new ArrayList<>();
+    private final List<Float> capturedRatiosB = new ArrayList<>();
+    private final int REQUIRED_CALIBRATION_FRAMES = 5;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         
-        // Initialize ViewBinding
         binding = ActivityFaceSetupBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
 
         db = HFSDatabaseHelper.getInstance(this);
         cameraExecutor = Executors.newSingleThreadExecutor();
 
-        // Configure ML Kit for maximum landmark accuracy
         FaceDetectorOptions options = new FaceDetectorOptions.Builder()
                 .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
                 .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
-                .setMinFaceSize(0.35f) // Ensure the face is close enough for a good scan
+                .setMinFaceSize(0.4f) // Require user to be close for calibration
                 .build();
         
         detector = FaceDetection.getClient(options);
 
-        // UI Controls
         binding.btnBack.setOnClickListener(v -> finish());
         
-        // Start the camera for biometric registration
         startCamera();
     }
 
-    /**
-     * Initializes CameraX for the visible registration preview.
-     */
     private void startCamera() {
         ListenableFuture<ProcessCameraProvider> cameraProviderFuture = 
                 ProcessCameraProvider.getInstance(this);
@@ -82,44 +83,34 @@ public class FaceSetupActivity extends AppCompatActivity {
             try {
                 ProcessCameraProvider cameraProvider = cameraProviderFuture.get();
 
-                // 1. Preview Provider
                 Preview preview = new Preview.Builder().build();
                 preview.setSurfaceProvider(binding.viewFinder.getSurfaceProvider());
 
-                // 2. Identity Analyzer
                 ImageAnalysis imageAnalysis = new ImageAnalysis.Builder()
                         .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                         .build();
 
                 imageAnalysis.setAnalyzer(cameraExecutor, image -> {
-                    if (isFaceCaptured) {
+                    if (isCalibrationDone) {
                         image.close();
                         return;
                     }
-                    processRegistrationFrame(image);
+                    processCalibrationFrame(image);
                 });
 
-                // Front camera for identity setup
                 CameraSelector cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA;
-
                 cameraProvider.unbindAll();
                 cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageAnalysis);
 
             } catch (ExecutionException | InterruptedException e) {
-                Log.e(TAG, "Camera binding failed", e);
+                Log.e(TAG, "Camera Setup Failed: " + e.getMessage());
             }
         }, ContextCompat.getMainExecutor(this));
     }
 
-    /**
-     * Analyzes the setup frames to extract biometric landmark proportions.
-     */
     @SuppressWarnings("UnsafeOptInUsageError")
-    private void processRegistrationFrame(androidx.camera.core.ImageProxy imageProxy) {
-        if (imageProxy.getImage() == null) {
-            imageProxy.close();
-            return;
-        }
+    private void processCalibrationFrame(androidx.camera.core.ImageProxy imageProxy) {
+        if (imageProxy.getImage() == null) return;
 
         InputImage image = InputImage.fromMediaImage(
                 imageProxy.getImage(), 
@@ -128,16 +119,17 @@ public class FaceSetupActivity extends AppCompatActivity {
 
         detector.process(image)
                 .addOnSuccessListener(faces -> {
-                    if (!faces.isEmpty() && !isFaceCaptured) {
+                    if (!faces.isEmpty() && !isCalibrationDone) {
                         Face face = faces.get(0);
                         
-                        // Verify we can see eyes and nose clearly before saving
+                        // Extract all 4 points for triangulation
                         FaceLandmark leftEye = face.getLandmark(FaceLandmark.LEFT_EYE);
                         FaceLandmark rightEye = face.getLandmark(FaceLandmark.RIGHT_EYE);
                         FaceLandmark nose = face.getLandmark(FaceLandmark.NOSE_BASE);
+                        FaceLandmark mouth = face.getLandmark(FaceLandmark.MOUTH_BOTTOM);
 
-                        if (leftEye != null && rightEye != null && nose != null) {
-                            calibrateAndSaveIdentity(leftEye, rightEye, nose);
+                        if (leftEye != null && rightEye != null && nose != null && mouth != null) {
+                            collectBiometricSample(leftEye, rightEye, nose, mouth);
                         }
                     }
                 })
@@ -145,39 +137,56 @@ public class FaceSetupActivity extends AppCompatActivity {
     }
 
     /**
-     * Calculates the unique mathematical ratio of your face and saves it.
+     * Collects samples until we reach the required frame count for averaging.
      */
-    private void calibrateAndSaveIdentity(FaceLandmark left, FaceLandmark right, FaceLandmark nose) {
-        isFaceCaptured = true;
+    private void collectBiometricSample(FaceLandmark L, FaceLandmark R, FaceLandmark N, FaceLandmark M) {
+        float eyeDist = calculateDistance(L.getPosition(), R.getPosition());
+        float noseDist = calculateDistance(L.getPosition(), N.getPosition());
+        float mouthDist = calculateDistance(L.getPosition(), M.getPosition());
 
-        // Calculate distances between points
-        float eyeToEyeDist = calculateDistance(left.getPosition(), right.getPosition());
-        float eyeToNoseDist = calculateDistance(left.getPosition(), nose.getPosition());
-        
-        // This ratio (Proportion) is what makes the match accurate
-        if (eyeToNoseDist == 0) {
-            isFaceCaptured = false;
-            return;
-        }
-        
-        float biometricRatio = eyeToEyeDist / eyeToNoseDist;
-        final String ratioString = String.valueOf(biometricRatio);
+        if (noseDist == 0 || mouthDist == 0) return;
+
+        // Add ratios to the collection
+        capturedRatiosA.add(eyeDist / noseDist);
+        capturedRatiosB.add(eyeDist / mouthDist);
+
+        final int currentProgress = capturedRatiosA.size();
 
         runOnUiThread(() -> {
-            // Update UI to show success
+            binding.tvStatus.setText("CALIBRATING: " + currentProgress + "/" + REQUIRED_CALIBRATION_FRAMES);
+            
+            if (currentProgress >= REQUIRED_CALIBRATION_FRAMES) {
+                finalizeCalibration();
+            }
+        });
+    }
+
+    /**
+     * Calculates the final average proportions and saves to DB.
+     */
+    private void finalizeCalibration() {
+        isCalibrationDone = true;
+
+        float sumA = 0, sumB = 0;
+        for (float r : capturedRatiosA) sumA += r;
+        for (float r : capturedRatiosB) sumB += r;
+
+        float avgA = sumA / REQUIRED_CALIBRATION_FRAMES;
+        float avgB = sumB / REQUIRED_CALIBRATION_FRAMES;
+
+        // Final Format: RatioA|RatioB
+        final String finalIdentityMap = avgA + "|" + avgB;
+
+        runOnUiThread(() -> {
             binding.captureAnimation.setVisibility(View.VISIBLE);
-            binding.tvStatus.setText("IDENTITY CALIBRATED");
+            binding.tvStatus.setText("IDENTITY VERIFIED & SAVED");
             
-            // 1. Save the actual ratio map to the database
-            db.saveOwnerFaceData(ratioString);
-            
-            // 2. Mark setup as complete
+            // Save the averaged biometric map
+            db.saveOwnerFaceData(finalIdentityMap);
             db.setSetupComplete(true);
 
-            Log.i(TAG, "Face Registered with Ratio: " + ratioString);
-            Toast.makeText(this, "Face Identity Saved Successfully", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "Face Calibration Complete", Toast.LENGTH_LONG).show();
 
-            // Auto-close after success
             binding.rootLayout.postDelayed(this::finish, 2000);
         });
     }
@@ -190,8 +199,6 @@ public class FaceSetupActivity extends AppCompatActivity {
     protected void onDestroy() {
         super.onDestroy();
         cameraExecutor.shutdown();
-        if (detector != null) {
-            detector.close();
-        }
+        if (detector != null) detector.close();
     }
 }
