@@ -41,7 +41,11 @@ import java.util.concurrent.Executors;
 
 /**
  * The Security Overlay Activity.
- * FIXED: Updated SmsHelper call to pass 4 arguments (Context, App, Link, Type).
+ * FIXED: 
+ * 1. Resolved '4 arguments' SmsHelper build error.
+ * 2. Implemented strict 1500ms Waterfall Handover.
+ * 3. Integrated Biometric/Fingerprint Failure alert trigger.
+ * 4. Added full diagnostic Java error popup for identity failures.
  */
 public class LockScreenActivity extends AppCompatActivity {
 
@@ -64,6 +68,7 @@ public class LockScreenActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
+        // Standard HFS Security Flags
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
                 | WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
                 | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
@@ -82,9 +87,11 @@ public class LockScreenActivity extends AppCompatActivity {
 
         setupBiometricAuth();
 
+        // 1. HARDWARE CHECK: If phone has Class 3 Face hardware, use system prompt instantly
         if (PermissionHelper.hasClass3Biometrics(this)) {
             biometricPrompt.authenticate(promptInfo);
         } else {
+            // FALLBACK: Use Custom Normalized ML Kit logic
             startInvisibleCamera();
             startWaterfallTimer();
         }
@@ -93,9 +100,13 @@ public class LockScreenActivity extends AppCompatActivity {
         binding.btnFingerprint.setOnClickListener(v -> biometricPrompt.authenticate(promptInfo));
     }
 
+    /**
+     * 1.5-Second Waterfall Logic: Capped search time before forcing fingerprint.
+     */
     private void startWaterfallTimer() {
         waterfallHandler.postDelayed(() -> {
             if (!isActionTaken && !isFinishing()) {
+                Log.w(TAG, "Waterfall: Detection timeout. Forcing Fingerprint sensor.");
                 biometricPrompt.authenticate(promptInfo);
             }
         }, 1500);
@@ -108,19 +119,21 @@ public class LockScreenActivity extends AppCompatActivity {
             @Override
             public void onAuthenticationSucceeded(@NonNull BiometricPrompt.AuthenticationResult result) {
                 super.onAuthenticationSucceeded(result);
+                // OWNER VERIFIED: Grant access and kill loop
                 onSecurityVerified();
             }
 
             @Override
             public void onAuthenticationFailed() {
                 super.onAuthenticationFailed();
+                // SECURITY BREACH: Wrong finger touched sensor. Trigger Alert flow.
                 triggerIntruderAlert(null);
             }
         });
 
         promptInfo = new BiometricPrompt.PromptInfo.Builder()
                 .setTitle("HFS Identity Check")
-                .setSubtitle("Authenticate to access your app")
+                .setSubtitle("Confirm identity to access your app")
                 .setNegativeButtonText("Use PIN")
                 .build();
     }
@@ -128,6 +141,7 @@ public class LockScreenActivity extends AppCompatActivity {
     private void onSecurityVerified() {
         waterfallHandler.removeCallbacksAndMessages(null);
         if (targetPackage != null) {
+            // SIGNAL SERVICE: Grant 30s grace period to stop the infinite loop
             AppMonitorService.unlockSession(targetPackage);
         }
         finish();
@@ -136,7 +150,7 @@ public class LockScreenActivity extends AppCompatActivity {
     private void showDiagnosticError(String errorDetail) {
         runOnUiThread(() -> {
             new AlertDialog.Builder(this, R.style.Theme_HFS_Dialog)
-                .setTitle("Biometric Identity Failure")
+                .setTitle("Identity Mismatch Details")
                 .setMessage(errorDetail)
                 .setCancelable(false)
                 .setPositiveButton("CLOSE", (dialog, which) -> dialog.dismiss())
@@ -185,6 +199,7 @@ public class LockScreenActivity extends AppCompatActivity {
 
             @Override
             public void onMismatchFound() {
+                // Caught by Normalized 5-Point math
                 String diagnostic = faceAuthHelper.getLastDiagnosticInfo();
                 showDiagnosticError(diagnostic);
                 triggerIntruderAlert(imageProxy);
@@ -207,17 +222,21 @@ public class LockScreenActivity extends AppCompatActivity {
             binding.scanningIndicator.setVisibility(View.GONE);
             binding.lockContainer.setVisibility(View.VISIBLE);
 
+            // Secretly save intruder photo locally
             if (imageProxy != null) {
                 FileSecureHelper.saveIntruderCapture(LockScreenActivity.this, imageProxy);
             }
 
+            // Initiate GPS location and SMS alert
             getGPSAndSendAlert();
+            
+            // Re-trigger biometric prompt for owner
             biometricPrompt.authenticate(promptInfo);
         });
     }
 
     /**
-     * FIX: Passes the required 4th argument (alertType) to SmsHelper.
+     * FIXED: Passes the required 4rd argument to SmsHelper and uses effectively final string.
      */
     private void getGPSAndSendAlert() {
         String rawAppName = getIntent().getStringExtra("TARGET_APP_NAME");
@@ -226,14 +245,14 @@ public class LockScreenActivity extends AppCompatActivity {
         LocationHelper.getDeviceLocation(this, new LocationHelper.LocationResultCallback() {
             @Override
             public void onLocationFound(String mapLink) {
-                // FIXED: Added "Biometric Mismatch" as 4th parameter
+                // FIXED: Now passes AlertType "Biometric Mismatch"
                 SmsHelper.sendAlertSms(LockScreenActivity.this, finalAppName, mapLink, "Biometric Mismatch");
             }
 
             @Override
             public void onLocationFailed(String error) {
-                // FIXED: Added "Biometric Mismatch" as 4th parameter
-                SmsHelper.sendAlertSms(LockScreenActivity.this, finalAppName, "GPS Signal Error", "Biometric Mismatch");
+                // FIXED: Now passes AlertType "Biometric Mismatch"
+                SmsHelper.sendAlertSms(LockScreenActivity.this, finalAppName, "GPS Signal Unavailable", "Biometric Mismatch");
             }
         });
     }
