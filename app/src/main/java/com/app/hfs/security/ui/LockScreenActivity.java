@@ -11,8 +11,8 @@ import android.view.WindowManager;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
-import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.biometric.BiometricManager;
 import androidx.biometric.BiometricPrompt;
 import androidx.camera.core.CameraSelector;
 import androidx.camera.core.ImageAnalysis;
@@ -25,11 +25,9 @@ import androidx.core.content.ContextCompat;
 import com.hfs.security.R;
 import com.hfs.security.databinding.ActivityLockScreenBinding;
 import com.hfs.security.services.AppMonitorService;
-import com.hfs.security.utils.FaceAuthHelper;
 import com.hfs.security.utils.FileSecureHelper;
 import com.hfs.security.utils.HFSDatabaseHelper;
 import com.hfs.security.utils.LocationHelper;
-import com.hfs.security.utils.PermissionHelper;
 import com.hfs.security.utils.SmsHelper;
 
 import com.google.common.util.concurrent.ListenableFuture;
@@ -41,24 +39,23 @@ import java.util.concurrent.Executors;
 
 /**
  * The Security Overlay Activity.
- * FIXED: 
- * 1. Step-By-Step Logic: Checks for System Face Hardware first, then falls back to ML Kit.
- * 2. Loop Killer: Managed via AppMonitorService.isLockActive flag.
- * 3. 1.5s Handover: Switches to Fingerprint instantly if ML Kit fails.
- * 4. Diagnostics: Java Error Popup for identity mismatches.
+ * UPDATED PLAN: 
+ * 1. Removed ML Kit completely.
+ * 2. Uses System-Native Unlock (Face, Finger, PIN, or Pattern).
+ * 3. Captures a silent intruder photo via CameraX immediately on launch.
+ * 4. Provides HFS MPIN as an alternative manual override.
  */
 public class LockScreenActivity extends AppCompatActivity {
 
     private static final String TAG = "HFS_LockScreen";
     private ActivityLockScreenBinding binding;
     private ExecutorService cameraExecutor;
-    private FaceAuthHelper faceAuthHelper;
     private HFSDatabaseHelper db;
     private String targetPackage;
     
     private boolean isActionTaken = false;
-    private boolean isProcessing = false;
-    private final Handler waterfallHandler = new Handler(Looper.getMainLooper());
+    private boolean isCameraCaptured = false;
+    private ImageProxy lastCapturedFrame = null;
 
     private Executor biometricExecutor;
     private BiometricPrompt biometricPrompt;
@@ -68,7 +65,7 @@ public class LockScreenActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // 1. CRITICAL: Tell Service that Lock is active to prevent re-trigger loop
+        // Signal service to prevent re-triggering while this activity is open
         AppMonitorService.isLockActive = true;
 
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
@@ -80,94 +77,90 @@ public class LockScreenActivity extends AppCompatActivity {
         setContentView(binding.getRoot());
 
         db = HFSDatabaseHelper.getInstance(this);
-        faceAuthHelper = new FaceAuthHelper(this);
         cameraExecutor = Executors.newSingleThreadExecutor();
         targetPackage = getIntent().getStringExtra("TARGET_APP_PACKAGE");
 
-        binding.lockContainer.setVisibility(View.GONE);
-        binding.scanningIndicator.setVisibility(View.VISIBLE);
+        // UI Prep
+        binding.scanningIndicator.setVisibility(View.GONE);
+        binding.lockContainer.setVisibility(View.VISIBLE);
 
-        // Initialize Biometric Prompt logic
-        setupBiometricAuth();
+        // 1. Initialize the Invisible Camera for immediate intruder capture
+        startInvisibleCamera();
 
-        // 2. THE ZERO-FAIL WATERFALL
-        if (PermissionHelper.hasSystemFaceHardware(this)) {
-            // STEP A: Use official System Face Authentication
-            Log.i(TAG, "Hardware Face detected. Starting System Prompt.");
-            biometricPrompt.authenticate(promptInfo);
-        } else {
-            // STEP B: Fallback to custom ML Kit logic
-            Log.i(TAG, "No Hardware Face. Starting ML Kit fallback.");
-            startInvisibleCamera();
-            startWaterfallTimer();
-        }
+        // 2. Setup the System Biometric/Credential Logic
+        setupSystemSecurity();
 
-        binding.btnUnlockPin.setOnClickListener(v -> checkPinAndUnlock());
-        binding.btnFingerprint.setOnClickListener(v -> biometricPrompt.authenticate(promptInfo));
+        // 3. Automatically trigger the system unlock dialog
+        triggerSystemAuth();
+
+        // Button Listeners
+        binding.btnUnlockPin.setOnClickListener(v -> checkMpinAndUnlock());
+        binding.btnFingerprint.setOnClickListener(v -> triggerSystemAuth());
     }
 
     /**
-     * Step 4: 1500ms Handover.
-     * If ML Kit fails to verify the owner quickly, we force the Fingerprint sensor.
+     * Configures the prompt to use the phone's default security methods.
+     * This includes Fingerprint, System Face Unlock, or PIN/Pattern/Password.
      */
-    private void startWaterfallTimer() {
-        waterfallHandler.postDelayed(() -> {
-            if (!isActionTaken && !isFinishing()) {
-                Log.w(TAG, "Waterfall: Face verification timeout. Handing over to Fingerprint.");
-                biometricPrompt.authenticate(promptInfo);
-            }
-        }, 1500);
-    }
-
-    private void setupBiometricAuth() {
+    private void setupSystemSecurity() {
         biometricExecutor = ContextCompat.getMainExecutor(this);
         biometricPrompt = new BiometricPrompt(this, biometricExecutor, 
                 new BiometricPrompt.AuthenticationCallback() {
             @Override
             public void onAuthenticationSucceeded(@NonNull BiometricPrompt.AuthenticationResult result) {
                 super.onAuthenticationSucceeded(result);
-                // SUCCESS: Identity confirmed via System hardware
-                onSecurityVerified();
+                // SUCCESS: User verified via phone system
+                onOwnerVerified();
             }
 
             @Override
             public void onAuthenticationFailed() {
                 super.onAuthenticationFailed();
-                // FINGERPRINT ERROR: Trigger intruder alert flow
-                triggerIntruderAlert(null);
+                // This is called for every wrong finger/face attempt
+                Log.w(TAG, "System security attempt failed.");
+            }
+
+            @Override
+            public void onAuthenticationError(int errorCode, @NonNull CharSequence errString) {
+                super.onAuthenticationError(errorCode, errString);
+                // Triggered if user cancels or too many failures
+                if (errorCode != BiometricPrompt.ERROR_USER_CANCELED && errorCode != BiometricPrompt.ERROR_NEGATIVE_BUTTON) {
+                    Toast.makeText(LockScreenActivity.this, "Security Error: " + errString, Toast.LENGTH_SHORT).show();
+                    triggerIntruderAlert();
+                }
             }
         });
 
-        promptInfo = new BiometricPrompt.PromptInfo.Builder()
-                .setTitle("HFS Security Verification")
-                .setSubtitle("Confirm identity to unlock")
-                .setNegativeButtonText("Use PIN")
-                .build();
+        // Prompt configuration to allow all system credentials
+        BiometricPrompt.PromptInfo.Builder builder = new BiometricPrompt.PromptInfo.Builder()
+                .setTitle("HFS Security")
+                .setSubtitle("Use your phone's screen lock to unlock")
+                .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG 
+                                        | BiometricManager.Authenticators.DEVICE_CREDENTIAL);
+
+        promptInfo = builder.build();
     }
 
-    /**
-     * Resets flags and signals AppMonitorService that protection is granted.
-     */
-    private void onSecurityVerified() {
-        waterfallHandler.removeCallbacksAndMessages(null);
-        // Clear global loop flag
+    private void triggerSystemAuth() {
+        try {
+            biometricPrompt.authenticate(promptInfo);
+        } catch (Exception e) {
+            Log.e(TAG, "System Auth Unavailable: " + e.getMessage());
+        }
+    }
+
+    private void onOwnerVerified() {
         AppMonitorService.isLockActive = false;
-        
         if (targetPackage != null) {
             AppMonitorService.unlockSession(targetPackage);
         }
+        
+        // Ensure any captured frames are closed to prevent memory leaks
+        if (lastCapturedFrame != null) {
+            lastCapturedFrame.close();
+        }
+        
         finish();
-    }
-
-    private void showDiagnosticError(String errorDetail) {
-        runOnUiThread(() -> {
-            new AlertDialog.Builder(this, R.style.Theme_HFS_Dialog)
-                .setTitle("Identity Mismatch Details")
-                .setMessage(errorDetail)
-                .setCancelable(false)
-                .setPositiveButton("CLOSE", (dialog, which) -> dialog.dismiss())
-                .show();
-        });
     }
 
     private void startInvisibleCamera() {
@@ -184,104 +177,91 @@ public class LockScreenActivity extends AppCompatActivity {
                         .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                         .build();
 
-                imageAnalysis.setAnalyzer(cameraExecutor, this::processCameraFrame);
+                imageAnalysis.setAnalyzer(cameraExecutor, image -> {
+                    // Capture only one frame for the intruder log
+                    if (!isCameraCaptured) {
+                        isCameraCaptured = true;
+                        lastCapturedFrame = image;
+                        // We keep the reference but don't close it until we save or verify
+                    } else {
+                        image.close();
+                    }
+                });
 
                 CameraSelector cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA;
                 cameraProvider.unbindAll();
                 cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageAnalysis);
 
             } catch (ExecutionException | InterruptedException e) {
-                triggerIntruderAlert(null);
+                Log.e(TAG, "CameraX Error: " + e.getMessage());
             }
         }, ContextCompat.getMainExecutor(this));
     }
 
-    private void processCameraFrame(@NonNull ImageProxy imageProxy) {
-        if (isProcessing || isActionTaken) {
-            imageProxy.close();
-            return;
+    private void checkMpinAndUnlock() {
+        String input = binding.etPinInput.getText().toString();
+        if (input.equals(db.getMasterPin())) {
+            onOwnerVerified();
+        } else {
+            binding.tvErrorMsg.setText("Incorrect HFS MPIN");
+            binding.etPinInput.setText("");
+            // Wrong HFS PIN counts as an intrusion attempt
+            triggerIntruderAlert();
         }
-
-        isProcessing = true;
-        faceAuthHelper.authenticate(imageProxy, new FaceAuthHelper.AuthCallback() {
-            @Override
-            public void onMatchFound() {
-                runOnUiThread(() -> onSecurityVerified());
-            }
-
-            @Override
-            public void onMismatchFound() {
-                // Caught by Landmark Proportion logic
-                String diagnostic = faceAuthHelper.getLastDiagnosticInfo();
-                showDiagnosticError(diagnostic);
-                triggerIntruderAlert(imageProxy);
-            }
-
-            @Override
-            public void onError(String error) {
-                isProcessing = false;
-                imageProxy.close();
-            }
-        });
     }
 
-    private void triggerIntruderAlert(ImageProxy imageProxy) {
+    /**
+     * Executes the intrusion alert flow:
+     * 1. Saves the photo captured at launch.
+     * 2. Fetches GPS.
+     * 3. Sends SMS.
+     */
+    private void triggerIntruderAlert() {
         if (isActionTaken) return;
         isActionTaken = true;
-        waterfallHandler.removeCallbacksAndMessages(null);
 
         runOnUiThread(() -> {
-            binding.scanningIndicator.setVisibility(View.GONE);
-            binding.lockContainer.setVisibility(View.VISIBLE);
-
-            if (imageProxy != null) {
-                FileSecureHelper.saveIntruderCapture(LockScreenActivity.this, imageProxy);
+            // Save the frame we captured at the start
+            if (lastCapturedFrame != null) {
+                FileSecureHelper.saveIntruderCapture(LockScreenActivity.this, lastCapturedFrame);
             }
 
-            // GPS Fetch and Alerts
-            sendEnhancedSecurityAlerts();
+            // Trigger GPS and SMS Alerts
+            fetchLocationAndSendAlert();
             
-            // Demand owner authentication via fingerprint
-            biometricPrompt.authenticate(promptInfo);
+            Toast.makeText(this, "⚠ Intruder Evidence Saved", Toast.LENGTH_LONG).show();
         });
     }
 
-    private void sendEnhancedSecurityAlerts() {
-        String rawAppName = getIntent().getStringExtra("TARGET_APP_NAME");
-        final String finalAppName = (rawAppName == null) ? "Protected App" : rawAppName;
+    private void fetchLocationAndSendAlert() {
+        String appName = getIntent().getStringExtra("TARGET_APP_NAME");
+        final String finalAppName = (appName == null) ? "a Protected App" : appName;
 
         LocationHelper.getDeviceLocation(this, new LocationHelper.LocationResultCallback() {
             @Override
             public void onLocationFound(String mapLink) {
-                SmsHelper.sendAlertSms(LockScreenActivity.this, finalAppName, mapLink, "Biometric Mismatch");
+                SmsHelper.sendAlertSms(LockScreenActivity.this, finalAppName, mapLink);
             }
 
             @Override
             public void onLocationFailed(String error) {
-                SmsHelper.sendAlertSms(LockScreenActivity.this, finalAppName, "GPS Signal Error", "Biometric Mismatch");
+                SmsHelper.sendAlertSms(LockScreenActivity.this, finalAppName, "GPS Unavailable");
             }
         });
     }
 
-    private void checkPinAndUnlock() {
-        String input = binding.etPinInput.getText().toString();
-        if (input.equals(db.getMasterPin())) {
-            onSecurityVerified();
-        } else {
-            binding.tvErrorMsg.setText("Incorrect Master PIN");
-            binding.etPinInput.setText("");
-        }
-    }
-
     @Override
     protected void onDestroy() {
-        waterfallHandler.removeCallbacksAndMessages(null);
         cameraExecutor.shutdown();
-        // Force reset the loop flag on exit
         AppMonitorService.isLockActive = false;
+        if (lastCapturedFrame != null) {
+            lastCapturedFrame.close();
+        }
         super.onDestroy();
     }
 
     @Override
-    public void onBackPressed() {}
+    public void onBackPressed() {
+        // Disabled to prevent bypass
+    }
 }
