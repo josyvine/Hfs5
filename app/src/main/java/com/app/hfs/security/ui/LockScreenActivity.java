@@ -11,6 +11,7 @@ import android.view.WindowManager;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
+import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.biometric.BiometricManager;
 import androidx.biometric.BiometricPrompt;
@@ -39,11 +40,10 @@ import java.util.concurrent.Executors;
 
 /**
  * The Security Overlay Activity.
- * UPDATED PLAN: 
- * 1. Removed ML Kit completely.
- * 2. Uses System-Native Unlock (Face, Finger, PIN, or Pattern).
- * 3. Captures a silent intruder photo via CameraX immediately on launch.
- * 4. Provides HFS MPIN as an alternative manual override.
+ * FIXED BUILD ERRORS:
+ * 1. Removed reference to 'scanningIndicator' (View was removed from XML).
+ * 2. Fixed SmsHelper call to include all 4 required arguments.
+ * 3. Maintains System-Native Unlock and Invisible Photo capture.
  */
 public class LockScreenActivity extends AppCompatActivity {
 
@@ -80,8 +80,7 @@ public class LockScreenActivity extends AppCompatActivity {
         cameraExecutor = Executors.newSingleThreadExecutor();
         targetPackage = getIntent().getStringExtra("TARGET_APP_PACKAGE");
 
-        // UI Prep
-        binding.scanningIndicator.setVisibility(View.GONE);
+        // FIX: Removed scanningIndicator.setVisibility as it no longer exists in XML
         binding.lockContainer.setVisibility(View.VISIBLE);
 
         // 1. Initialize the Invisible Camera for immediate intruder capture
@@ -98,10 +97,6 @@ public class LockScreenActivity extends AppCompatActivity {
         binding.btnFingerprint.setOnClickListener(v -> triggerSystemAuth());
     }
 
-    /**
-     * Configures the prompt to use the phone's default security methods.
-     * This includes Fingerprint, System Face Unlock, or PIN/Pattern/Password.
-     */
     private void setupSystemSecurity() {
         biometricExecutor = ContextCompat.getMainExecutor(this);
         biometricPrompt = new BiometricPrompt(this, biometricExecutor, 
@@ -109,29 +104,24 @@ public class LockScreenActivity extends AppCompatActivity {
             @Override
             public void onAuthenticationSucceeded(@NonNull BiometricPrompt.AuthenticationResult result) {
                 super.onAuthenticationSucceeded(result);
-                // SUCCESS: User verified via phone system
                 onOwnerVerified();
             }
 
             @Override
             public void onAuthenticationFailed() {
                 super.onAuthenticationFailed();
-                // This is called for every wrong finger/face attempt
                 Log.w(TAG, "System security attempt failed.");
             }
 
             @Override
             public void onAuthenticationError(int errorCode, @NonNull CharSequence errString) {
                 super.onAuthenticationError(errorCode, errString);
-                // Triggered if user cancels or too many failures
                 if (errorCode != BiometricPrompt.ERROR_USER_CANCELED && errorCode != BiometricPrompt.ERROR_NEGATIVE_BUTTON) {
-                    Toast.makeText(LockScreenActivity.this, "Security Error: " + errString, Toast.LENGTH_SHORT).show();
                     triggerIntruderAlert();
                 }
             }
         });
 
-        // Prompt configuration to allow all system credentials
         BiometricPrompt.PromptInfo.Builder builder = new BiometricPrompt.PromptInfo.Builder()
                 .setTitle("HFS Security")
                 .setSubtitle("Use your phone's screen lock to unlock")
@@ -155,7 +145,6 @@ public class LockScreenActivity extends AppCompatActivity {
             AppMonitorService.unlockSession(targetPackage);
         }
         
-        // Ensure any captured frames are closed to prevent memory leaks
         if (lastCapturedFrame != null) {
             lastCapturedFrame.close();
         }
@@ -178,11 +167,9 @@ public class LockScreenActivity extends AppCompatActivity {
                         .build();
 
                 imageAnalysis.setAnalyzer(cameraExecutor, image -> {
-                    // Capture only one frame for the intruder log
                     if (!isCameraCaptured) {
                         isCameraCaptured = true;
                         lastCapturedFrame = image;
-                        // We keep the reference but don't close it until we save or verify
                     } else {
                         image.close();
                     }
@@ -205,31 +192,21 @@ public class LockScreenActivity extends AppCompatActivity {
         } else {
             binding.tvErrorMsg.setText("Incorrect HFS MPIN");
             binding.etPinInput.setText("");
-            // Wrong HFS PIN counts as an intrusion attempt
             triggerIntruderAlert();
         }
     }
 
-    /**
-     * Executes the intrusion alert flow:
-     * 1. Saves the photo captured at launch.
-     * 2. Fetches GPS.
-     * 3. Sends SMS.
-     */
     private void triggerIntruderAlert() {
         if (isActionTaken) return;
         isActionTaken = true;
 
         runOnUiThread(() -> {
-            // Save the frame we captured at the start
             if (lastCapturedFrame != null) {
                 FileSecureHelper.saveIntruderCapture(LockScreenActivity.this, lastCapturedFrame);
             }
 
-            // Trigger GPS and SMS Alerts
             fetchLocationAndSendAlert();
-            
-            Toast.makeText(this, "⚠ Intruder Evidence Saved", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "⚠ Security Breach Recorded", Toast.LENGTH_LONG).show();
         });
     }
 
@@ -240,12 +217,14 @@ public class LockScreenActivity extends AppCompatActivity {
         LocationHelper.getDeviceLocation(this, new LocationHelper.LocationResultCallback() {
             @Override
             public void onLocationFound(String mapLink) {
-                SmsHelper.sendAlertSms(LockScreenActivity.this, finalAppName, mapLink);
+                // FIX: Added the 4th argument "Security Breach" to match SmsHelper signature
+                SmsHelper.sendAlertSms(LockScreenActivity.this, finalAppName, mapLink, "Security Breach");
             }
 
             @Override
             public void onLocationFailed(String error) {
-                SmsHelper.sendAlertSms(LockScreenActivity.this, finalAppName, "GPS Unavailable");
+                // FIX: Added the 4th argument "Security Breach" to match SmsHelper signature
+                SmsHelper.sendAlertSms(LockScreenActivity.this, finalAppName, "GPS Unavailable", "Security Breach");
             }
         });
     }
@@ -261,7 +240,5 @@ public class LockScreenActivity extends AppCompatActivity {
     }
 
     @Override
-    public void onBackPressed() {
-        // Disabled to prevent bypass
-    }
+    public void onBackPressed() {}
 }
