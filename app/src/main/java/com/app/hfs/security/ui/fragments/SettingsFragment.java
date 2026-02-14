@@ -25,10 +25,10 @@ import com.hfs.security.utils.HFSDatabaseHelper;
 
 /**
  * Advanced Settings Screen for HFS Security.
- * UPDATED PLAN:
- * 1. Removed ML Kit Rescan logic - Face identity is now handled by the System.
- * 2. Manages Trusted Number for alerts and the Master PIN (MPIN).
- * 3. Handles Anti-Uninstall (Device Admin) and Stealth Mode (Dialer Trigger).
+ * FIXED: 
+ * 1. Sets 'Setup Complete' flag upon saving credentials to stop the toast loop.
+ * 2. Removed all dead references to Face/Rescan logic.
+ * 3. Manages MPIN, Trusted Number, Stealth Mode, and Anti-Uninstall.
  */
 public class SettingsFragment extends Fragment {
 
@@ -50,11 +50,11 @@ public class SettingsFragment extends Fragment {
         super.onViewCreated(view, savedInstanceState);
         db = HFSDatabaseHelper.getInstance(requireContext());
         
-        // Initialize Device Admin components to prevent uninstallation
+        // Initialize Device Admin components to prevent unauthorized uninstallation
         devicePolicyManager = (DevicePolicyManager) requireContext().getSystemService(Context.DEVICE_POLICY_SERVICE);
         adminComponent = new ComponentName(requireContext(), AdminReceiver.class);
 
-        // UI Cleanup: Hide the Rescan section as it is no longer used in the new plan
+        // CLEANUP: Ensure the Rescan button is hidden as it is no longer used in the Zero-Fail plan
         if (binding.btnRescanFace != null) {
             binding.btnRescanFace.setVisibility(View.GONE);
         }
@@ -64,16 +64,19 @@ public class SettingsFragment extends Fragment {
     }
 
     /**
-     * Populates the input fields and switches with currently saved data.
+     * Fills the UI fields with currently saved security data.
      */
     private void loadSettings() {
         // Load the secondary phone number that receives alert SMS
         binding.etTrustedNumber.setText(db.getTrustedNumber());
         
-        // Load the 4-digit Master PIN (MPIN) used for manual override and dialer
-        binding.etSecretPin.setText(db.getMasterPin());
+        // Load the Master PIN (MPIN)
+        String currentPin = db.getMasterPin();
+        if (!currentPin.equals("0000")) {
+            binding.etSecretPin.setText(currentPin);
+        }
         
-        // Check if the phone's Device Admin is already granted to HFS
+        // Check if the phone's Device Admin is active for HFS
         boolean isAdminActive = devicePolicyManager.isAdminActive(adminComponent);
         binding.switchAntiUninstall.setChecked(isAdminActive);
 
@@ -83,33 +86,37 @@ public class SettingsFragment extends Fragment {
     }
 
     /**
-     * Configures the interaction logic for the settings components.
+     * Configures the click and toggle listeners for all settings.
      */
     private void setupListeners() {
-        // 1. SAVE SECURITY DATA
+        // 1. SAVE BUTTON: The primary trigger to set up security
         binding.btnSaveSettings.setOnClickListener(v -> {
             String number = binding.etTrustedNumber.getText().toString().trim();
             String pin = binding.etSecretPin.getText().toString().trim();
 
             if (TextUtils.isEmpty(number) || pin.length() < 4) {
-                Toast.makeText(getContext(), "Please provide a valid Trusted Number and 4-digit PIN", Toast.LENGTH_SHORT).show();
+                Toast.makeText(getContext(), "Provide a valid Trusted Number and 4-digit PIN", Toast.LENGTH_SHORT).show();
                 return;
             }
 
-            // Update persistent storage
+            // Save to persistent storage
             db.saveTrustedNumber(number);
             db.saveMasterPin(pin);
-            Toast.makeText(getContext(), "HFS Credentials Updated", Toast.LENGTH_SHORT).show();
+            
+            // FIX: Mark setup as complete so the 'Welcome' toast in MainActivity disappears
+            db.setSetupComplete(true);
+            
+            Toast.makeText(getContext(), "HFS Security Configured Successfully", Toast.LENGTH_SHORT).show();
         });
 
-        // 2. STEALTH MODE TOGGLE (Dialer Trigger)
+        // 2. STEALTH MODE TOGGLE (Dialer Launch)
         binding.switchStealthMode.setOnCheckedChangeListener((buttonView, isChecked) -> {
             db.setStealthMode(isChecked);
             if (isChecked) {
                 showStealthWarning();
             } else {
                 setAppIconVisible(true);
-                Toast.makeText(getContext(), "App Icon Restored to Home Screen", Toast.LENGTH_SHORT).show();
+                Toast.makeText(getContext(), "App Icon Unhidden", Toast.LENGTH_SHORT).show();
             }
         });
 
@@ -122,20 +129,20 @@ public class SettingsFragment extends Fragment {
             }
         });
 
-        // 4. DECOY SYSTEM TOGGLE
+        // 4. DECOY SYSTEM TOGGLE (Fake Gallery)
         binding.switchFakeGallery.setOnCheckedChangeListener((buttonView, isChecked) -> {
             db.setFakeGalleryEnabled(isChecked);
         });
     }
 
     /**
-     * Warns the user about the secret dial code before hiding the icon.
+     * Alerts the user that the icon will vanish and reminds them of the dialer PIN.
      */
     private void showStealthWarning() {
         String currentPin = db.getMasterPin();
         new AlertDialog.Builder(requireContext(), R.style.Theme_HFS_Dialog)
                 .setTitle("Stealth Mode Enabled")
-                .setMessage("The icon will be hidden. Dial your PIN (" + currentPin + ") and press CALL to open the HFS portal.")
+                .setMessage("The app icon will be hidden. To open HFS, dial your PIN (" + currentPin + ") and press CALL.")
                 .setPositiveButton("I UNDERSTAND", (dialog, which) -> setAppIconVisible(false))
                 .setNegativeButton("CANCEL", (dialog, which) -> binding.switchStealthMode.setChecked(false))
                 .setCancelable(false)
@@ -143,7 +150,7 @@ public class SettingsFragment extends Fragment {
     }
 
     /**
-     * Directly interacts with the PackageManager to Hide/Unhide the launcher icon.
+     * Uses the System PackageManager to enable/disable the launcher icon.
      */
     private void setAppIconVisible(boolean visible) {
         PackageManager pm = requireContext().getPackageManager();
@@ -158,7 +165,7 @@ public class SettingsFragment extends Fragment {
     private void activateDeviceAdmin() {
         Intent intent = new Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN);
         intent.putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, adminComponent);
-        intent.putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION, "Protects HFS from being uninstalled by intruders.");
+        intent.putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION, "Required to prevent intruders from uninstalling HFS.");
         startActivity(intent);
     }
 
