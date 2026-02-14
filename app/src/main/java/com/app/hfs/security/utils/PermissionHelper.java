@@ -2,6 +2,7 @@ package com.hfs.security.utils;
 
 import android.Manifest;
 import android.app.AppOpsManager;
+import android.app.KeyguardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -10,46 +11,33 @@ import android.os.Build;
 import android.os.Process;
 import android.provider.Settings;
 
-import androidx.biometric.BiometricManager;
 import androidx.core.content.ContextCompat;
 
 /**
- * Advanced Permission & Hardware Manager.
- * FIXED: Implemented a specific Hardware Check for Face Authentication 
- * to distinguish between Face and Fingerprint sensors.
+ * Advanced Permission & System Security Manager.
+ * UPDATED PLAN:
+ * 1. Removed all ML Kit / Landmark hardware specific checks.
+ * 2. Added isDeviceSecure check to verify phone-level PIN/Fingerprint status.
+ * 3. Maintained GPS, Overlay, and Phone interception verification.
  */
 public class PermissionHelper {
 
     /**
-     * Step 1: Specific Face Hardware Check.
-     * Logic: Verifies if the phone has dedicated Face hardware (3D/IR).
-     * This prevents the app from accidentally defaulting to Fingerprint 
-     * when we specifically want a Face scan.
+     * NEW: Verifies if the phone has any system security enabled.
+     * Logic: Checks if the user has a PIN, Pattern, Password, or Biometric 
+     * enrolled at the OS level. If this returns false, HFS should warn the user.
      */
-    public static boolean hasSystemFaceHardware(Context context) {
-        PackageManager pm = context.getPackageManager();
-        
-        // 1. Check for the official Android Face Feature
-        // This feature string is the standard for Face hardware
-        boolean hasFaceFeature = false;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            hasFaceFeature = pm.hasSystemFeature(PackageManager.FEATURE_FACE);
+    public static boolean isDeviceSecure(Context context) {
+        KeyguardManager keyguardManager = (KeyguardManager) context.getSystemService(Context.KEYGUARD_SERVICE);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            return keyguardManager != null && keyguardManager.isDeviceSecure();
         } else {
-            // Android 9 (Oppo) fallback check for common face hardware strings
-            hasFaceFeature = pm.hasSystemFeature("android.hardware.biometrics.face") ||
-                             pm.hasSystemFeature("com.oppo.face.trust");
+            return keyguardManager != null && keyguardManager.isKeyguardSecure();
         }
-
-        // 2. Cross-reference with BiometricManager
-        BiometricManager bm = BiometricManager.from(context);
-        int canAuth = bm.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG);
-        
-        // Match: System must have Face hardware AND be ready to use Strong Biometrics
-        return hasFaceFeature && (canAuth == BiometricManager.BIOMETRIC_SUCCESS);
     }
 
     /**
-     * Checks if the app can access GPS coordinates for tracking.
+     * Checks if the app can access GPS coordinates for tracking links.
      */
     public static boolean hasLocationPermissions(Context context) {
         return ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) 
@@ -97,6 +85,7 @@ public class PermissionHelper {
 
     /**
      * Checks for standard Runtime Permissions (Camera and SMS).
+     * Camera is still required for the silent intruder photo capture.
      */
     public static boolean hasBasePermissions(Context context) {
         boolean camera = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) 
@@ -108,14 +97,21 @@ public class PermissionHelper {
         return camera && sendSms;
     }
 
+    /**
+     * Master check to see if HFS is fully authorized to protect the device.
+     */
     public static boolean isAllSecurityGranted(Context context) {
         return hasBasePermissions(context) && 
                hasPhonePermissions(context) && 
                hasLocationPermissions(context) && 
                hasUsageStatsPermission(context) && 
-               canDrawOverlays(context);
+               canDrawOverlays(context) &&
+               isDeviceSecure(context);
     }
 
+    /**
+     * Helper to open app settings for manual Oppo Auto-startup enabling.
+     */
     public static void openAppSettings(Context context) {
         Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
         Uri uri = Uri.fromParts("package", context.getPackageName(), null);
