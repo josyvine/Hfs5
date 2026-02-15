@@ -60,10 +60,10 @@ import java.util.concurrent.Executors;
 
 /**
  * The Security Overlay Activity.
- * UPDATED for Google Drive Integration:
- * 1. Coordinates local capture, GPS location, and Cloud upload.
- * 2. Handles immediate upload if online, or WorkManager handover if offline.
- * 3. Incorporates shareable Drive links into the SMS alert message.
+ * FIXED BUILD ERRORS:
+ * 1. Restored triggerSystemAuth() method.
+ * 2. Updated FileSecureHelper call to retrieve File object for cloud upload.
+ * 3. Fully integrated Google Drive logic with Offline/Online decision engine.
  */
 public class LockScreenActivity extends AppCompatActivity {
 
@@ -103,11 +103,18 @@ public class LockScreenActivity extends AppCompatActivity {
 
         binding.lockContainer.setVisibility(View.VISIBLE);
 
+        // 1. Initialize background camera capture
         startInvisibleCamera();
+
+        // 2. Configure System Biometrics
         setupSystemSecurity();
+
+        // 3. FIX: Restored method call to start authentication immediately
         triggerSystemAuth();
 
         binding.btnUnlockPin.setOnClickListener(v -> checkMpinAndUnlock());
+        
+        // FIX: Restored method call for the manual fingerprint button
         binding.btnFingerprint.setOnClickListener(v -> triggerSystemAuth());
     }
 
@@ -146,11 +153,21 @@ public class LockScreenActivity extends AppCompatActivity {
         promptInfo = builder.build();
     }
 
+    /**
+     * FIX: Restored missing method to trigger the Biometric prompt.
+     */
+    private void triggerSystemAuth() {
+        try {
+            biometricPrompt.authenticate(promptInfo);
+        } catch (Exception e) {
+            showSystemCredentialPicker();
+        }
+    }
+
     private void triggerIntruderAlert() {
         if (isActionTaken) return;
         isActionTaken = true;
 
-        // Perform sequence: GPS -> Map Link -> Sync Decision -> SMS
         LocationHelper.getDeviceLocation(this, new LocationHelper.LocationResultCallback() {
             @Override
             public void onLocationFound(String mapLink) {
@@ -164,9 +181,6 @@ public class LockScreenActivity extends AppCompatActivity {
         });
     }
 
-    /**
-     * Decisions Engine: Determines whether to upload now or queue for later.
-     */
     private void processIntruderResponse(String mapLink) {
         String appName = getIntent().getStringExtra("TARGET_APP_NAME");
         if (appName == null) appName = "Protected Files";
@@ -174,14 +188,11 @@ public class LockScreenActivity extends AppCompatActivity {
         boolean isDriveReady = db.isDriveEnabled() && db.getGoogleAccount() != null;
 
         if (isDriveReady && isNetworkAvailable()) {
-            // ONLINE: Attempt immediate cloud upload
             uploadToCloudAndSms(appName, mapLink);
         } else if (isDriveReady) {
-            // OFFLINE: Queue with WorkManager and send 'Pending' SMS
             queueBackgroundUpload();
             SmsHelper.sendAlertSms(this, appName, mapLink, "Security Breach", null);
         } else {
-            // DRIVE DISABLED: Standard local-only alert
             SmsHelper.sendAlertSms(this, appName, mapLink, "Security Breach", null);
         }
 
@@ -192,17 +203,13 @@ public class LockScreenActivity extends AppCompatActivity {
         });
     }
 
-    /**
-     * Logic for immediate Google Drive upload on a background thread.
-     */
     private void uploadToCloudAndSms(String appName, String mapLink) {
         cameraExecutor.execute(() -> {
             try {
                 if (intruderFile == null || !intruderFile.exists()) return;
 
-                // Initialize Drive Service
                 GoogleSignInAccount account = GoogleSignIn.getLastSignedInAccount(this);
-                if (account == null) throw new Exception("Account not found");
+                if (account == null) throw new Exception("Google Account Disconnected");
 
                 GoogleAccountCredential credential = GoogleAccountCredential.usingOAuth2(
                         this, Collections.singleton(DriveScopes.DRIVE_FILE));
@@ -218,20 +225,16 @@ public class LockScreenActivity extends AppCompatActivity {
                 DriveHelper driveHelper = new DriveHelper(this, driveService);
                 String driveLink = driveHelper.uploadFileAndGetLink(intruderFile);
 
-                // Send final SMS with both Map and Drive links
                 SmsHelper.sendAlertSms(this, appName, mapLink, "Security Breach", driveLink);
 
             } catch (Exception e) {
-                Log.e(TAG, "Immediate upload failed, queuing worker: " + e.getMessage());
+                Log.e(TAG, "Cloud upload failed: " + e.getMessage());
                 queueBackgroundUpload();
                 SmsHelper.sendAlertSms(this, appName, mapLink, "Security Breach", null);
             }
         });
     }
 
-    /**
-     * Logic: Hands the file to WorkManager to handle retries and offline sync.
-     */
     private void queueBackgroundUpload() {
         if (intruderFile == null) return;
 
@@ -269,7 +272,7 @@ public class LockScreenActivity extends AppCompatActivity {
                 imageAnalysis.setAnalyzer(cameraExecutor, image -> {
                     if (!isCameraCaptured) {
                         isCameraCaptured = true;
-                        // Save photo locally immediately
+                        // FIX: Calling the new method that returns the File object
                         intruderFile = FileSecureHelper.saveIntruderCaptureAndGetFile(this, image);
                         image.close();
                     } else {
@@ -282,7 +285,7 @@ public class LockScreenActivity extends AppCompatActivity {
                 cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageAnalysis);
 
             } catch (ExecutionException | InterruptedException e) {
-                Log.e(TAG, "Camera Fail");
+                Log.e(TAG, "CameraX Initialization Error");
             }
         }, ContextCompat.getMainExecutor(this));
     }
@@ -298,7 +301,7 @@ public class LockScreenActivity extends AppCompatActivity {
     private void showSystemCredentialPicker() {
         KeyguardManager km = (KeyguardManager) getSystemService(Context.KEYGUARD_SERVICE);
         if (km != null && km.isDeviceSecure()) {
-            Intent intent = km.createConfirmDeviceCredentialIntent("HFS Security", "Enter phone lock to proceed");
+            Intent intent = km.createConfirmDeviceCredentialIntent("HFS Security", "Authenticate to proceed");
             if (intent != null) startActivityForResult(intent, SYSTEM_CREDENTIAL_REQUEST_CODE);
         }
     }
@@ -327,4 +330,7 @@ public class LockScreenActivity extends AppCompatActivity {
         AppMonitorService.isLockActive = false;
         super.onDestroy();
     }
+
+    @Override
+    public void onBackPressed() {}
 }
