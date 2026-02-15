@@ -6,7 +6,7 @@ on:
 
 jobs:
   build:
-    runs-on: Ubuntu-latest  
+    runs-on: ubuntu-latest  
 
     steps:
       - name: Checkout code
@@ -18,15 +18,27 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
+      # NEW: Decode the Keystore file from GitHub Secrets
+      # This creates the physical .jks file required by build.gradle
+      - name: Decode Keystore
+        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > app/release.jks
+
       - name: Build with Gradle
         uses: gradle/gradle-build-action@v2
         with:
           gradle-version: '8.0'
           cache-disabled: true
-          arguments: app:assembleDebug
+          # Changed to assembleRelease to generate the signed APK
+          arguments: app:assembleRelease
+        env:
+          # Injecting the secrets as Environment Variables for Gradle to read
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
 
-      - name: Upload APK
+      # NEW: Upload the signed RELEASE APK instead of the debug one
+      - name: Upload Signed APK
         uses: actions/upload-artifact@v4
         with:
-          name: app-debug.apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: HFS-Security-Release.apk
+          path: app/build/outputs/apk/release/app-release.apk
