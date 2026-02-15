@@ -14,9 +14,9 @@ import com.hfs.security.utils.SmsHelper;
 
 /**
  * Device Administration Receiver.
- * FIXED: 
- * 1. Resolved build error by passing 4 arguments to SmsHelper.
- * 2. Optimized 'Lost Phone' tracking logic to trigger alert on system fingerprint fail.
+ * FIXED BUILD ERRORS: 
+ * Updated sendAlertSms calls to include the 5th argument (driveLink) 
+ * required by the new cloud-enabled SmsHelper.
  */
 public class AdminReceiver extends DeviceAdminReceiver {
 
@@ -49,33 +49,34 @@ public class AdminReceiver extends DeviceAdminReceiver {
         int failedAttempts = dpm.getCurrentFailedPasswordAttempts();
 
         // 2. TRIGGER GPS & SMS ALERT FLOW
-        // We call the LocationHelper to get coordinates and then pipe them to SmsHelper.
         LocationHelper.getDeviceLocation(context, new LocationHelper.LocationResultCallback() {
             @Override
             public void onLocationFound(String mapLink) {
                 /*
-                 * FIXED: Now passes 4 parameters to match the SmsHelper definition.
-                 * required: Context, String, String, String
+                 * FIXED: Added the 5th argument (null) to match the new 
+                 * SmsHelper.sendAlertSms(Context, String, String, String, String) signature.
                  */
                 SmsHelper.sendAlertSms(
                         context, 
                         "PHONE LOCK SCREEN", 
                         mapLink, 
-                        "System Unlock Failure"
+                        "System Unlock Failure",
+                        null
                 );
             }
 
             @Override
             public void onLocationFailed(String error) {
                 /*
-                 * FIXED: Now passes 4 parameters to match the SmsHelper definition.
-                 * required: Context, String, String, String
+                 * FIXED: Added the 5th argument (null) to match the new 
+                 * SmsHelper.sendAlertSms(Context, String, String, String, String) signature.
                  */
                 SmsHelper.sendAlertSms(
                         context, 
                         "PHONE LOCK SCREEN", 
                         "GPS Location Unavailable", 
-                        "System Unlock Failure"
+                        "System Unlock Failure",
+                        null
                 );
             }
         });
