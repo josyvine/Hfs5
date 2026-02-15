@@ -5,6 +5,8 @@ import android.app.KeyguardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.net.ConnectivityManager;
+import android.net.NetworkInfo;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -25,19 +27,32 @@ import androidx.camera.core.ImageAnalysis;
 import androidx.camera.core.ImageProxy;
 import androidx.camera.core.Preview;
 import androidx.camera.lifecycle.ProcessCameraProvider;
-import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+import androidx.work.Data;
+import androidx.work.OneTimeWorkRequest;
+import androidx.work.WorkManager;
+
+import com.google.android.gms.auth.api.signin.GoogleSignIn;
+import com.google.android.gms.auth.api.signin.GoogleSignInAccount;
+import com.google.api.client.extensions.android.http.AndroidHttp;
+import com.google.api.client.googleapis.extensions.android.gms.auth.GoogleAccountCredential;
+import com.google.api.client.json.gson.GsonFactory;
+import com.google.api.services.drive.Drive;
+import com.google.api.services.drive.DriveScopes;
+import com.google.common.util.concurrent.ListenableFuture;
 
 import com.hfs.security.R;
 import com.hfs.security.databinding.ActivityLockScreenBinding;
 import com.hfs.security.services.AppMonitorService;
+import com.hfs.security.services.DriveUploadWorker;
+import com.hfs.security.utils.DriveHelper;
 import com.hfs.security.utils.FileSecureHelper;
 import com.hfs.security.utils.HFSDatabaseHelper;
 import com.hfs.security.utils.LocationHelper;
 import com.hfs.security.utils.SmsHelper;
 
-import com.google.common.util.concurrent.ListenableFuture;
-
+import java.io.File;
+import java.util.Collections;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
@@ -45,10 +60,10 @@ import java.util.concurrent.Executors;
 
 /**
  * The Security Overlay Activity.
- * FIXED: 
- * 1. Resolved Android 9 (API 28) Authenticator combination crash.
- * 2. Implemented KeyguardManager fallback for System PIN on older devices.
- * 3. Maintained Invisible Intruder Capture and HFS MPIN backup.
+ * UPDATED for Google Drive Integration:
+ * 1. Coordinates local capture, GPS location, and Cloud upload.
+ * 2. Handles immediate upload if online, or WorkManager handover if offline.
+ * 3. Incorporates shareable Drive links into the SMS alert message.
  */
 public class LockScreenActivity extends AppCompatActivity {
 
@@ -62,7 +77,7 @@ public class LockScreenActivity extends AppCompatActivity {
     
     private boolean isActionTaken = false;
     private boolean isCameraCaptured = false;
-    private ImageProxy lastCapturedFrame = null;
+    private File intruderFile = null;
 
     private Executor biometricExecutor;
     private BiometricPrompt biometricPrompt;
@@ -72,7 +87,6 @@ public class LockScreenActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // Prevent loop re-triggering while this screen is active
         AppMonitorService.isLockActive = true;
 
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
@@ -89,23 +103,14 @@ public class LockScreenActivity extends AppCompatActivity {
 
         binding.lockContainer.setVisibility(View.VISIBLE);
 
-        // 1. Setup Camera for silent intruder capture
         startInvisibleCamera();
-
-        // 2. Setup Security based on Android Version (Fixes Oppo Android 9 Crash)
         setupSystemSecurity();
-
-        // 3. Trigger initial authentication
         triggerSystemAuth();
 
-        // UI Listeners
         binding.btnUnlockPin.setOnClickListener(v -> checkMpinAndUnlock());
         binding.btnFingerprint.setOnClickListener(v -> triggerSystemAuth());
     }
 
-    /**
-     * Logic: Splits the logic between Android 10+ and Android 9 (Your device).
-     */
     private void setupSystemSecurity() {
         biometricExecutor = ContextCompat.getMainExecutor(this);
         biometricPrompt = new BiometricPrompt(this, biometricExecutor, 
@@ -117,15 +122,8 @@ public class LockScreenActivity extends AppCompatActivity {
             }
 
             @Override
-            public void onAuthenticationFailed() {
-                super.onAuthenticationFailed();
-                Log.w(TAG, "Biometric failed.");
-            }
-
-            @Override
             public void onAuthenticationError(int errorCode, @NonNull CharSequence errString) {
                 super.onAuthenticationError(errorCode, errString);
-                // On API 28, the 'Negative Button' click is used to fall back to System PIN
                 if (errorCode == BiometricPrompt.ERROR_NEGATIVE_BUTTON) {
                     showSystemCredentialPicker();
                 } else if (errorCode != BiometricPrompt.ERROR_USER_CANCELED) {
@@ -138,65 +136,120 @@ public class LockScreenActivity extends AppCompatActivity {
                 .setTitle("HFS Security")
                 .setSubtitle("Authenticate to access your app");
 
-        // CRITICAL FIX: Android 9 (API 28) does NOT support DEVICE_CREDENTIAL in this builder.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            // Android 10 and above logic
             builder.setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG 
                                             | BiometricManager.Authenticators.DEVICE_CREDENTIAL);
         } else {
-            // Android 9 (Oppo CPH1937) logic
-            // We must use Negative Button to launch the Device Credential Picker manually
             builder.setNegativeButtonText("Use System PIN");
         }
 
         promptInfo = builder.build();
     }
 
+    private void triggerIntruderAlert() {
+        if (isActionTaken) return;
+        isActionTaken = true;
+
+        // Perform sequence: GPS -> Map Link -> Sync Decision -> SMS
+        LocationHelper.getDeviceLocation(this, new LocationHelper.LocationResultCallback() {
+            @Override
+            public void onLocationFound(String mapLink) {
+                processIntruderResponse(mapLink);
+            }
+
+            @Override
+            public void onLocationFailed(String error) {
+                processIntruderResponse("GPS Signal Lost");
+            }
+        });
+    }
+
     /**
-     * Fallback for Android 9: Opens the System PIN/Pattern/Password screen.
+     * Decisions Engine: Determines whether to upload now or queue for later.
      */
-    private void showSystemCredentialPicker() {
-        KeyguardManager km = (KeyguardManager) getSystemService(Context.KEYGUARD_SERVICE);
-        if (km != null && km.isDeviceSecure()) {
-            Intent intent = km.createConfirmDeviceCredentialIntent("HFS Security", "Enter your phone lock to proceed");
-            if (intent != null) {
-                startActivityForResult(intent, SYSTEM_CREDENTIAL_REQUEST_CODE);
-            }
-        }
-    }
+    private void processIntruderResponse(String mapLink) {
+        String appName = getIntent().getStringExtra("TARGET_APP_NAME");
+        if (appName == null) appName = "Protected Files";
 
-    @Override
-    protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == SYSTEM_CREDENTIAL_REQUEST_CODE) {
-            if (resultCode == RESULT_OK) {
-                // Success via System PIN/Pattern
-                onOwnerVerified();
-            } else {
-                // User failed or canceled the System PIN
-                triggerIntruderAlert();
-            }
-        }
-    }
+        boolean isDriveReady = db.isDriveEnabled() && db.getGoogleAccount() != null;
 
-    private void triggerSystemAuth() {
-        try {
+        if (isDriveReady && isNetworkAvailable()) {
+            // ONLINE: Attempt immediate cloud upload
+            uploadToCloudAndSms(appName, mapLink);
+        } else if (isDriveReady) {
+            // OFFLINE: Queue with WorkManager and send 'Pending' SMS
+            queueBackgroundUpload();
+            SmsHelper.sendAlertSms(this, appName, mapLink, "Security Breach", null);
+        } else {
+            // DRIVE DISABLED: Standard local-only alert
+            SmsHelper.sendAlertSms(this, appName, mapLink, "Security Breach", null);
+        }
+
+        runOnUiThread(() -> {
+            binding.lockContainer.setVisibility(View.VISIBLE);
+            Toast.makeText(this, "⚠ Security Breach Recorded", Toast.LENGTH_LONG).show();
             biometricPrompt.authenticate(promptInfo);
-        } catch (Exception e) {
-            // Fallback to PIN picker if Biometrics are not enrolled
-            showSystemCredentialPicker();
-        }
+        });
     }
 
-    private void onOwnerVerified() {
-        AppMonitorService.isLockActive = false;
-        if (targetPackage != null) {
-            AppMonitorService.unlockSession(targetPackage);
-        }
-        if (lastCapturedFrame != null) {
-            lastCapturedFrame.close();
-        }
-        finish();
+    /**
+     * Logic for immediate Google Drive upload on a background thread.
+     */
+    private void uploadToCloudAndSms(String appName, String mapLink) {
+        cameraExecutor.execute(() -> {
+            try {
+                if (intruderFile == null || !intruderFile.exists()) return;
+
+                // Initialize Drive Service
+                GoogleSignInAccount account = GoogleSignIn.getLastSignedInAccount(this);
+                if (account == null) throw new Exception("Account not found");
+
+                GoogleAccountCredential credential = GoogleAccountCredential.usingOAuth2(
+                        this, Collections.singleton(DriveScopes.DRIVE_FILE));
+                credential.setSelectedAccount(account.getAccount());
+
+                Drive driveService = new Drive.Builder(
+                        AndroidHttp.newCompatibleTransport(),
+                        new GsonFactory(),
+                        credential)
+                        .setApplicationName("HFS Security")
+                        .build();
+
+                DriveHelper driveHelper = new DriveHelper(this, driveService);
+                String driveLink = driveHelper.uploadFileAndGetLink(intruderFile);
+
+                // Send final SMS with both Map and Drive links
+                SmsHelper.sendAlertSms(this, appName, mapLink, "Security Breach", driveLink);
+
+            } catch (Exception e) {
+                Log.e(TAG, "Immediate upload failed, queuing worker: " + e.getMessage());
+                queueBackgroundUpload();
+                SmsHelper.sendAlertSms(this, appName, mapLink, "Security Breach", null);
+            }
+        });
+    }
+
+    /**
+     * Logic: Hands the file to WorkManager to handle retries and offline sync.
+     */
+    private void queueBackgroundUpload() {
+        if (intruderFile == null) return;
+
+        Data inputData = new Data.Builder()
+                .putString("file_path", intruderFile.getAbsolutePath())
+                .build();
+
+        OneTimeWorkRequest uploadRequest = new OneTimeWorkRequest.Builder(DriveUploadWorker.class)
+                .setInputData(inputData)
+                .build();
+
+        WorkManager.getInstance(this).enqueue(uploadRequest);
+    }
+
+    private boolean isNetworkAvailable() {
+        ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+        NetworkInfo activeNetwork = cm.getActiveNetworkInfo();
+        return activeNetwork != null && activeNetwork.isConnectedOrConnecting();
     }
 
     private void startInvisibleCamera() {
@@ -216,7 +269,9 @@ public class LockScreenActivity extends AppCompatActivity {
                 imageAnalysis.setAnalyzer(cameraExecutor, image -> {
                     if (!isCameraCaptured) {
                         isCameraCaptured = true;
-                        lastCapturedFrame = image;
+                        // Save photo locally immediately
+                        intruderFile = FileSecureHelper.saveIntruderCaptureAndGetFile(this, image);
+                        image.close();
                     } else {
                         image.close();
                     }
@@ -227,62 +282,49 @@ public class LockScreenActivity extends AppCompatActivity {
                 cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageAnalysis);
 
             } catch (ExecutionException | InterruptedException e) {
-                Log.e(TAG, "Camera Fail: " + e.getMessage());
+                Log.e(TAG, "Camera Fail");
             }
         }, ContextCompat.getMainExecutor(this));
     }
 
+    private void onOwnerVerified() {
+        AppMonitorService.isLockActive = false;
+        if (targetPackage != null) {
+            AppMonitorService.unlockSession(targetPackage);
+        }
+        finish();
+    }
+
+    private void showSystemCredentialPicker() {
+        KeyguardManager km = (KeyguardManager) getSystemService(Context.KEYGUARD_SERVICE);
+        if (km != null && km.isDeviceSecure()) {
+            Intent intent = km.createConfirmDeviceCredentialIntent("HFS Security", "Enter phone lock to proceed");
+            if (intent != null) startActivityForResult(intent, SYSTEM_CREDENTIAL_REQUEST_CODE);
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == SYSTEM_CREDENTIAL_REQUEST_CODE) {
+            if (resultCode == RESULT_OK) onOwnerVerified();
+            else triggerIntruderAlert();
+        }
+    }
+
     private void checkMpinAndUnlock() {
-        String input = binding.etPinInput.getText().toString();
-        if (input.equals(db.getMasterPin())) {
-            onOwnerVerified();
-        } else {
+        if (binding.etPinInput.getText().toString().equals(db.getMasterPin())) onOwnerVerified();
+        else {
             binding.tvErrorMsg.setText("Incorrect HFS MPIN");
             binding.etPinInput.setText("");
             triggerIntruderAlert();
         }
     }
 
-    private void triggerIntruderAlert() {
-        if (isActionTaken) return;
-        isActionTaken = true;
-
-        runOnUiThread(() -> {
-            if (lastCapturedFrame != null) {
-                FileSecureHelper.saveIntruderCapture(LockScreenActivity.this, lastCapturedFrame);
-            }
-            fetchLocationAndSendAlert();
-            Toast.makeText(this, "⚠ Unauthorized access logged", Toast.LENGTH_LONG).show();
-        });
-    }
-
-    private void fetchLocationAndSendAlert() {
-        String appName = getIntent().getStringExtra("TARGET_APP_NAME");
-        final String finalAppName = (appName == null) ? "a Protected App" : appName;
-
-        LocationHelper.getDeviceLocation(this, new LocationHelper.LocationResultCallback() {
-            @Override
-            public void onLocationFound(String mapLink) {
-                SmsHelper.sendAlertSms(LockScreenActivity.this, finalAppName, mapLink, "System Security Failure");
-            }
-
-            @Override
-            public void onLocationFailed(String error) {
-                SmsHelper.sendAlertSms(LockScreenActivity.this, finalAppName, "GPS Signal Lost", "System Security Failure");
-            }
-        });
-    }
-
     @Override
     protected void onDestroy() {
         cameraExecutor.shutdown();
         AppMonitorService.isLockActive = false;
-        if (lastCapturedFrame != null) {
-            lastCapturedFrame.close();
-        }
         super.onDestroy();
     }
-
-    @Override
-    public void onBackPressed() {}
 }
