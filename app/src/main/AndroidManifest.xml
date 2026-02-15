@@ -2,40 +2,41 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- 1. SYSTEM BIOMETRIC PERMISSIONS -->
-    <!-- Required to trigger the phone's native Face, Fingerprint, or PIN/Pattern lock -->
+    <!-- 1. CLOUD & NETWORK PERMISSIONS (NEW: Required for Google Drive) -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- 2. SYSTEM BIOMETRIC PERMISSIONS -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <uses-permission android:name="android.permission.USE_FACE" />
 
-    <!-- 2. INTRUDER CAPTURE PERMISSIONS -->
+    <!-- 3. INTRUDER CAPTURE PERMISSIONS -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" />
     <uses-feature android:name="android.hardware.camera.front" />
 
-    <!-- 3. GPS LOCATION PERMISSIONS -->
+    <!-- 4. GPS LOCATION PERMISSIONS -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
-    <!-- 4. DIALER STEALTH MODE PERMISSIONS -->
+    <!-- 5. DIALER STEALTH MODE PERMISSIONS -->
     <uses-permission android:name="android.permission.PROCESS_OUTGOING_CALLS" />
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
 
-    <!-- 5. APP MONITORING & OVERLAY PERMISSIONS -->
+    <!-- 6. APP MONITORING & OVERLAY PERMISSIONS -->
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- 6. SMS ALERT PERMISSIONS -->
+    <!-- 7. SMS ALERT PERMISSIONS -->
     <uses-permission android:name="android.permission.SEND_SMS" />
     <uses-permission android:name="android.permission.RECEIVE_SMS" />
     <uses-permission android:name="android.permission.READ_SMS" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
-    <!-- 7. PERSISTENCE & STORAGE -->
+    <!-- 8. PERSISTENCE & STORAGE -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
 
@@ -49,7 +50,7 @@
         android:theme="@style/Theme.HFS"
         tools:targetApi="31">
 
-        <!-- A. SPLASH SCREEN (Entry Point) -->
+        <!-- A. SPLASH SCREEN -->
         <activity
             android:name=".ui.SplashActivity"
             android:exported="true"
@@ -66,7 +67,7 @@
             android:exported="false"
             android:windowSoftInputMode="adjustResize"/>
 
-        <!-- C. STEALTH UNLOCK POPUP (Hide/Unhide Toggle) -->
+        <!-- C. STEALTH UNLOCK POPUP -->
         <activity
             android:name=".ui.StealthUnlockActivity"
             android:excludeFromRecents="true"
@@ -74,7 +75,7 @@
             android:launchMode="singleInstance"
             android:theme="@style/Theme.HFS.Dialog" />
 
-        <!-- D. LOCK SCREEN OVERLAY (Main Security Guard) -->
+        <!-- D. LOCK SCREEN OVERLAY -->
         <activity
             android:name=".ui.LockScreenActivity"
             android:excludeFromRecents="true"
@@ -83,7 +84,7 @@
             android:theme="@style/Theme.HFS.LockOverlay"
             android:windowSoftInputMode="stateAlwaysHidden" />
 
-        <!-- E. MONITORING SERVICE -->
+        <!-- E. MONITORING SERVICE (Background Guard) -->
         <service
             android:name=".services.AppMonitorService"
             android:enabled="true"
