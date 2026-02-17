@@ -1,16 +1,12 @@
 package com.hfs.security.ui;
 
-import android.Manifest;
 import android.app.KeyguardManager;
 import android.content.Context;
 import android.content.Intent;
-import android.content.pm.PackageManager;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.Handler;
-import android.os.Looper;
 import android.util.Log;
 import android.view.View;
 import android.view.WindowManager;
@@ -18,13 +14,11 @@ import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.biometric.BiometricManager;
 import androidx.biometric.BiometricPrompt;
 import androidx.camera.core.CameraSelector;
 import androidx.camera.core.ImageAnalysis;
-import androidx.camera.core.ImageProxy;
 import androidx.camera.core.Preview;
 import androidx.camera.lifecycle.ProcessCameraProvider;
 import androidx.core.content.ContextCompat;
@@ -41,10 +35,9 @@ import com.google.api.services.drive.Drive;
 import com.google.api.services.drive.DriveScopes;
 import com.google.common.util.concurrent.ListenableFuture;
 
-import com.hfs.security.R;
 import com.hfs.security.databinding.ActivityLockScreenBinding;
-import com.hfs.security.services.AppMonitorService;
 import com.hfs.security.services.DriveUploadWorker;
+import com.hfs.security.services.HFSAccessibilityService;
 import com.hfs.security.utils.DriveHelper;
 import com.hfs.security.utils.FileSecureHelper;
 import com.hfs.security.utils.HFSDatabaseHelper;
@@ -60,10 +53,13 @@ import java.util.concurrent.Executors;
 
 /**
  * The Security Overlay Activity.
- * FIXED BUILD ERRORS:
- * 1. Restored triggerSystemAuth() method.
- * 2. Updated FileSecureHelper call to retrieve File object for cloud upload.
- * 3. Fully integrated Google Drive logic with Offline/Online decision engine.
+ * UPDATED: Now communicates with HFSAccessibilityService for session management.
+ * 
+ * Logic Preserved:
+ * 1. Biometric/PIN Authentication.
+ * 2. Background Intruder Capture.
+ * 3. Google Drive Cloud Sync.
+ * 4. SMS Alerting.
  */
 public class LockScreenActivity extends AppCompatActivity {
 
@@ -87,7 +83,8 @@ public class LockScreenActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        AppMonitorService.isLockActive = true;
+        // Notify Service that lock screen is visible
+        HFSAccessibilityService.isLockActive = true;
 
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
                 | WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
@@ -109,12 +106,11 @@ public class LockScreenActivity extends AppCompatActivity {
         // 2. Configure System Biometrics
         setupSystemSecurity();
 
-        // 3. FIX: Restored method call to start authentication immediately
+        // 3. Start authentication immediately
         triggerSystemAuth();
 
         binding.btnUnlockPin.setOnClickListener(v -> checkMpinAndUnlock());
         
-        // FIX: Restored method call for the manual fingerprint button
         binding.btnFingerprint.setOnClickListener(v -> triggerSystemAuth());
     }
 
@@ -153,9 +149,6 @@ public class LockScreenActivity extends AppCompatActivity {
         promptInfo = builder.build();
     }
 
-    /**
-     * FIX: Restored missing method to trigger the Biometric prompt.
-     */
     private void triggerSystemAuth() {
         try {
             biometricPrompt.authenticate(promptInfo);
@@ -291,9 +284,12 @@ public class LockScreenActivity extends AppCompatActivity {
     }
 
     private void onOwnerVerified() {
-        AppMonitorService.isLockActive = false;
+        // Reset lock state in the Service
+        HFSAccessibilityService.isLockActive = false;
+        
         if (targetPackage != null) {
-            AppMonitorService.unlockSession(targetPackage);
+            // Signal the Service to whitelist this app for 10 seconds
+            HFSAccessibilityService.unlockSession(targetPackage);
         }
         finish();
     }
@@ -327,7 +323,8 @@ public class LockScreenActivity extends AppCompatActivity {
     @Override
     protected void onDestroy() {
         cameraExecutor.shutdown();
-        AppMonitorService.isLockActive = false;
+        // Ensure lock flag is cleared when activity is destroyed
+        HFSAccessibilityService.isLockActive = false;
         super.onDestroy();
     }
 
