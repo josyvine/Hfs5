@@ -1,12 +1,14 @@
 package com.hfs.security.ui.fragments;
 
-import android.app.ActivityManager;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Bundle;
+import android.provider.Settings;
+import android.text.TextUtils;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -16,13 +18,16 @@ import androidx.navigation.Navigation;
 
 import com.hfs.security.R;
 import com.hfs.security.databinding.FragmentHomeBinding;
-import com.hfs.security.services.AppMonitorService;
+import com.hfs.security.services.HFSAccessibilityService;
 import com.hfs.security.utils.HFSDatabaseHelper;
 
 /**
  * The Main Dashboard of the HFS App.
- * Provides the user with a master toggle to activate/deactivate 
- * the Silent Intruder Detection Service.
+ * UPDATED: Now manages the HFSAccessibilityService (Zero-Flash Detection).
+ * 
+ * Logic Change:
+ * Accessibility Services cannot be started/stopped programmatically for security reasons.
+ * The toggle button now redirects the user to System Settings to Enable/Disable the guard.
  */
 public class HomeFragment extends Fragment {
 
@@ -50,13 +55,9 @@ public class HomeFragment extends Fragment {
      * Connects the UI buttons to their respective security functions.
      */
     private void setupClickListeners() {
-        // Master Toggle: Starts or Stops the background monitoring
+        // Master Toggle: Redirects to Accessibility Settings to Enable/Disable
         binding.btnToggleSecurity.setOnClickListener(v -> {
-            if (isServiceRunning(AppMonitorService.class)) {
-                stopSecurityService();
-            } else {
-                startSecurityService();
-            }
+            openAccessibilitySettings();
         });
 
         // Shortcut to view the Intruder Evidence Logs
@@ -72,10 +73,10 @@ public class HomeFragment extends Fragment {
 
     /**
      * Updates the text and colors on the dashboard based on 
-     * whether the security service is currently active.
+     * whether the Accessibility Service is currently active.
      */
     private void refreshUI() {
-        boolean active = isServiceRunning(AppMonitorService.class);
+        boolean active = isAccessibilityServiceEnabled();
 
         if (active) {
             binding.tvSecurityStatus.setText("PROTECTION: ACTIVE");
@@ -95,36 +96,34 @@ public class HomeFragment extends Fragment {
     }
 
     /**
-     * Launches the Foreground Service for Phase 2/3 operations.
+     * Redirects the user to the specific Android Settings page.
      */
-    private void startSecurityService() {
-        Intent serviceIntent = new Intent(requireContext(), AppMonitorService.class);
-        ContextCompat.startForegroundService(requireContext(), serviceIntent);
-        
-        // Refresh UI after a short delay to allow service state to update
-        binding.getRoot().postDelayed(this::refreshUI, 500);
+    private void openAccessibilitySettings() {
+        Toast.makeText(requireContext(), "Find 'HFS Security' and toggle it.", Toast.LENGTH_LONG).show();
+        Intent intent = new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS);
+        startActivity(intent);
     }
 
     /**
-     * Stops the background monitor.
+     * Utility method to check if HFSAccessibilityService is enabled in System Settings.
      */
-    private void stopSecurityService() {
-        Intent serviceIntent = new Intent(requireContext(), AppMonitorService.class);
-        requireContext().stopService(serviceIntent);
+    private boolean isAccessibilityServiceEnabled() {
+        Context context = requireContext();
+        String expectedComponentName = context.getPackageName() + "/" + HFSAccessibilityService.class.getName();
         
-        binding.getRoot().postDelayed(this::refreshUI, 500);
-    }
+        String enabledServicesSetting = Settings.Secure.getString(
+                context.getContentResolver(), 
+                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+        
+        if (enabledServicesSetting == null) return false;
 
-    /**
-     * Utility method to check if the AppMonitorService is active.
-     */
-    private boolean isServiceRunning(Class<?> serviceClass) {
-        ActivityManager manager = (ActivityManager) requireContext().getSystemService(Context.ACTIVITY_SERVICE);
-        if (manager != null) {
-            for (ActivityManager.RunningServiceInfo service : manager.getRunningServices(Integer.MAX_VALUE)) {
-                if (serviceClass.getName().equals(service.service.getClassName())) {
-                    return true;
-                }
+        TextUtils.SimpleStringSplitter splitter = new TextUtils.SimpleStringSplitter(':');
+        splitter.setString(enabledServicesSetting);
+
+        while (splitter.hasNext()) {
+            String componentName = splitter.next();
+            if (componentName.equalsIgnoreCase(expectedComponentName)) {
+                return true;
             }
         }
         return false;
@@ -133,7 +132,8 @@ public class HomeFragment extends Fragment {
     @Override
     public void onResume() {
         super.onResume();
-        refreshUI(); // Ensure status is current when user returns to app
+        // UI must refresh when user returns from Settings
+        refreshUI(); 
     }
 
     @Override
