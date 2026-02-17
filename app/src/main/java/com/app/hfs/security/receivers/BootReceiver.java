@@ -3,18 +3,17 @@ package com.hfs.security.receivers;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
-import android.os.Build;
 import android.util.Log;
 
-import androidx.core.content.ContextCompat;
-
-import com.hfs.security.services.AppMonitorService;
 import com.hfs.security.utils.HFSDatabaseHelper;
 
 /**
  * System Boot Receiver (Phase 7).
- * Automatically restarts the HFS Security Monitor when the device reboots.
- * This prevents intruders from bypassing the security by simply restarting the phone.
+ * Detects device reboots to ensure HFS security status is logged.
+ * 
+ * Note: Since moving to Accessibility Service, the Android System automatically 
+ * handles restarting the service on boot if it was enabled by the user.
+ * Manual start via Intent is no longer required.
  */
 public class BootReceiver extends BroadcastReceiver {
 
@@ -28,35 +27,14 @@ public class BootReceiver extends BroadcastReceiver {
         if (Intent.ACTION_BOOT_COMPLETED.equals(action) || 
             "android.intent.action.QUICKBOOT_POWERON".equals(action)) {
             
-            Log.i(TAG, "Device reboot detected. Restarting HFS Security Guard...");
+            Log.i(TAG, "Device reboot detected. HFS Security System is being managed by Android Accessibility Service.");
 
             HFSDatabaseHelper db = HFSDatabaseHelper.getInstance(context);
 
-            // Logic: Only start the service if it was active before the reboot
-            // or if the user has completed the initial setup.
+            // Verify setup status after reboot
             if (db.isSetupComplete()) {
-                startHfsService(context);
+                Log.d(TAG, "HFS Setup is verified. System protection remains active as per user settings.");
             }
-        }
-    }
-
-    /**
-     * Helper to launch the AppMonitorService as a Foreground Service.
-     */
-    private void startHfsService(Context context) {
-        Intent serviceIntent = new Intent(context, AppMonitorService.class);
-        
-        try {
-            // In Android 8.0 (API 26) and above, we must start foreground services 
-            // specifically to avoid background execution limits.
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                ContextCompat.startForegroundService(context, serviceIntent);
-            } else {
-                context.startService(serviceIntent);
-            }
-            Log.d(TAG, "HFS AppMonitorService successfully restarted on boot.");
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to restart HFS Service on boot: " + e.getMessage());
         }
     }
 }
