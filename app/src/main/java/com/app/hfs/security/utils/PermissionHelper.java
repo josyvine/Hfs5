@@ -3,6 +3,7 @@ package com.hfs.security.utils;
 import android.Manifest;
 import android.app.AppOpsManager;
 import android.app.KeyguardManager;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -10,20 +11,20 @@ import android.net.Uri;
 import android.os.Build; 
 import android.os.Process;
 import android.provider.Settings;
+import android.text.TextUtils;
 
 import androidx.core.content.ContextCompat;
 
+import com.hfs.security.services.HFSAccessibilityService;
+
 /**
  * Advanced Permission & System Security Manager.
- * UPDATED PLAN:
- * 1. Removed all ML Kit / Landmark hardware specific checks.
- * 2. Added isDeviceSecure check to verify phone-level PIN/Fingerprint status.
- * 3. Maintained GPS, Overlay, and Phone interception verification.
+ * UPDATED: Added Accessibility Service verification for Zero-Flash detection.
  */
 public class PermissionHelper {
 
     /**
-     * NEW: Verifies if the phone has any system security enabled.
+     * Verifies if the phone has any system security enabled.
      * Logic: Checks if the user has a PIN, Pattern, Password, or Biometric 
      * enrolled at the OS level. If this returns false, HFS should warn the user.
      */
@@ -69,6 +70,7 @@ public class PermissionHelper {
 
     /**
      * Checks if the app can detect foreground app launches.
+     * (Kept for legacy compatibility/stats, though Detection is now Accessibility-based).
      */
     public static boolean hasUsageStatsPermission(Context context) {
         AppOpsManager appOps = (AppOpsManager) context.getSystemService(Context.APP_OPS_SERVICE);
@@ -81,6 +83,31 @@ public class PermissionHelper {
         }
         
         return mode == AppOpsManager.MODE_ALLOWED;
+    }
+
+    /**
+     * NEW: Checks if the HFS Accessibility Service is enabled in System Settings.
+     * Required for Zero-Flash app locking.
+     */
+    public static boolean isAccessibilityServiceEnabled(Context context) {
+        String expectedComponentName = new ComponentName(context, HFSAccessibilityService.class).flattenToString();
+        
+        String enabledServicesSetting = Settings.Secure.getString(
+                context.getContentResolver(), 
+                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+        
+        if (enabledServicesSetting == null) return false;
+
+        TextUtils.SimpleStringSplitter splitter = new TextUtils.SimpleStringSplitter(':');
+        splitter.setString(enabledServicesSetting);
+
+        while (splitter.hasNext()) {
+            String componentName = splitter.next();
+            if (componentName.equalsIgnoreCase(expectedComponentName)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -99,14 +126,15 @@ public class PermissionHelper {
 
     /**
      * Master check to see if HFS is fully authorized to protect the device.
+     * UPDATED: Now requires Accessibility Service to be enabled.
      */
     public static boolean isAllSecurityGranted(Context context) {
         return hasBasePermissions(context) && 
                hasPhonePermissions(context) && 
                hasLocationPermissions(context) && 
-               hasUsageStatsPermission(context) && 
                canDrawOverlays(context) &&
-               isDeviceSecure(context);
+               isDeviceSecure(context) &&
+               isAccessibilityServiceEnabled(context); 
     }
 
     /**
