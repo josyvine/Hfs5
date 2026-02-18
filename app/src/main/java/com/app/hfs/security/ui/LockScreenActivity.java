@@ -53,7 +53,9 @@ import java.util.concurrent.Executors;
 
 /**
  * The Security Overlay Activity.
- * FIXED: Context stability for Google Drive Uploads to prevent "Pending Upload" errors.
+ * FIXED: 
+ * 1. Context stability for Google Drive Uploads (no more "Pending Upload" error).
+ * 2. Task Manager bypass fix by resetting flags in onStop().
  */
 public class LockScreenActivity extends AppCompatActivity {
 
@@ -174,7 +176,6 @@ public class LockScreenActivity extends AppCompatActivity {
 
         boolean isDriveReady = db.isDriveEnabled() && db.getGoogleAccount() != null;
 
-        // Note: Using getApplicationContext() for network check is safer
         if (isDriveReady && isNetworkAvailable()) {
             uploadToCloudAndSms(appName, mapLink);
         } else if (isDriveReady) {
@@ -196,7 +197,6 @@ public class LockScreenActivity extends AppCompatActivity {
             try {
                 if (intruderFile == null || !intruderFile.exists()) return;
 
-                // FIX: Use ApplicationContext to ensure Google Sign-In client is stable in background thread
                 GoogleSignInAccount account = GoogleSignIn.getLastSignedInAccount(getApplicationContext());
                 if (account == null) throw new Exception("Google Account Disconnected");
 
@@ -211,7 +211,6 @@ public class LockScreenActivity extends AppCompatActivity {
                         .setApplicationName("HFS Security")
                         .build();
 
-                // FIX: Pass ApplicationContext to DriveHelper
                 DriveHelper driveHelper = new DriveHelper(getApplicationContext(), driveService);
                 String driveLink = driveHelper.uploadFileAndGetLink(intruderFile);
 
@@ -221,7 +220,6 @@ public class LockScreenActivity extends AppCompatActivity {
                 String errorMsg = e.getMessage();
                 Log.e(TAG, "Cloud upload failed: " + errorMsg);
                 
-                // SHOW ERROR TO USER ON SCREEN so they know why it failed
                 runOnUiThread(() -> 
                     Toast.makeText(getApplicationContext(), "Upload Failed: " + errorMsg, Toast.LENGTH_LONG).show()
                 );
@@ -318,6 +316,14 @@ public class LockScreenActivity extends AppCompatActivity {
             binding.etPinInput.setText("");
             triggerIntruderAlert();
         }
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        // Task Manager Bypass Fix: 
+        // If intruder hides lock screen via task button, reset flag so Service can re-detect.
+        HFSAccessibilityService.isLockActive = false;
     }
 
     @Override
