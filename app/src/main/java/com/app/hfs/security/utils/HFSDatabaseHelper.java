@@ -10,10 +10,6 @@ import java.lang.reflect.Type;
 import java.util.HashSet;
 import java.util.Set;
 
-/**
- * Manages local persistent storage for HFS Security.
- * UPDATED: Added KEY_PHONE_PROTECTION for the new System Unlock Ambush feature.
- */
 public class HFSDatabaseHelper {
 
     private static final String PREF_NAME = "hfs_security_prefs";
@@ -51,14 +47,15 @@ public class HFSDatabaseHelper {
         return instance;
     }
 
-    // --- SYSTEM PHONE UNLOCK PROTECTION (NEW) ---
+    // --- SYSTEM PHONE UNLOCK PROTECTION ---
 
     public void setPhoneProtectionEnabled(boolean enabled) {
         prefs.edit().putBoolean(KEY_PHONE_PROTECTION, enabled).apply();
     }
 
+    // FIXED: Changed default to TRUE so it works immediately without UI toggle
     public boolean isPhoneProtectionEnabled() {
-        return prefs.getBoolean(KEY_PHONE_PROTECTION, false);
+        return prefs.getBoolean(KEY_PHONE_PROTECTION, true);
     }
 
     // --- GOOGLE DRIVE / CLOUD SETTINGS ---
