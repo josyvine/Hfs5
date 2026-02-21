@@ -1,8 +1,12 @@
 package com.hfs.security.ui;
 
+import android.Manifest;
 import android.app.KeyguardManager;
+import android.app.WallpaperManager;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.graphics.drawable.Drawable;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
 import android.os.Build;
@@ -21,6 +25,7 @@ import androidx.camera.core.CameraSelector;
 import androidx.camera.core.ImageAnalysis;
 import androidx.camera.core.Preview;
 import androidx.camera.lifecycle.ProcessCameraProvider;
+import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import androidx.work.Data;
 import androidx.work.OneTimeWorkRequest;
@@ -53,9 +58,10 @@ import java.util.concurrent.Executors;
 
 /**
  * The Security Overlay Activity.
- * FIXED: 
- * 1. Context stability for Google Drive Uploads (no more "Pending Upload" error).
- * 2. Task Manager bypass fix by resetting flags in onStop().
+ * FEATURES:
+ * 1. "Chameleon" UI: Copies System Wallpaper to blend in.
+ * 2. Stable Cloud Sync: Uses ApplicationContext for Drive uploads.
+ * 3. Robust Security: Handles Task Manager bypass via onStop().
  */
 public class LockScreenActivity extends AppCompatActivity {
 
@@ -82,6 +88,7 @@ public class LockScreenActivity extends AppCompatActivity {
         // Notify Service that lock screen is visible
         HFSAccessibilityService.isLockActive = true;
 
+        // Set High Priority Window Flags
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
                 | WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
                 | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
@@ -93,6 +100,9 @@ public class LockScreenActivity extends AppCompatActivity {
         db = HFSDatabaseHelper.getInstance(this);
         cameraExecutor = Executors.newSingleThreadExecutor();
         targetPackage = getIntent().getStringExtra("TARGET_APP_PACKAGE");
+
+        // NEW: Apply the "Chameleon" System Wallpaper Background
+        applySystemWallpaperBackground();
 
         binding.lockContainer.setVisibility(View.VISIBLE);
 
@@ -108,6 +118,39 @@ public class LockScreenActivity extends AppCompatActivity {
         binding.btnUnlockPin.setOnClickListener(v -> checkMpinAndUnlock());
         
         binding.btnFingerprint.setOnClickListener(v -> triggerSystemAuth());
+    }
+
+    /**
+     * CHAMELEON FEATURE:
+     * Retrieves the actual phone's lock screen wallpaper and applies it
+     * to this activity. This makes HFS look native to the device.
+     */
+    private void applySystemWallpaperBackground() {
+        try {
+            // Check storage permission first (required to read wallpaper on some androids)
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) 
+                    == PackageManager.PERMISSION_GRANTED) {
+                
+                WallpaperManager wallpaperManager = WallpaperManager.getInstance(this);
+                
+                // Try to get the Lock Screen specific wallpaper first
+                Drawable wallpaper = wallpaperManager.getDrawable(WallpaperManager.FLAG_LOCK);
+                
+                // If no specific lock wallpaper exists, fall back to the System Home wallpaper
+                if (wallpaper == null) {
+                    wallpaper = wallpaperManager.getDrawable(WallpaperManager.FLAG_SYSTEM);
+                }
+
+                if (wallpaper != null) {
+                    binding.lockContainer.setBackground(wallpaper);
+                    // Add a slight dark tint so the text/buttons remain visible
+                    binding.lockContainer.getBackground().setAlpha(230);
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to apply system wallpaper: " + e.getMessage());
+            // Fail silently and keep the default background defined in XML
+        }
     }
 
     private void setupSystemSecurity() {
@@ -126,14 +169,22 @@ public class LockScreenActivity extends AppCompatActivity {
                 if (errorCode == BiometricPrompt.ERROR_NEGATIVE_BUTTON) {
                     showSystemCredentialPicker();
                 } else if (errorCode != BiometricPrompt.ERROR_USER_CANCELED) {
+                    // Triggers the trap on Wrong Finger / Face
                     triggerIntruderAlert();
                 }
+            }
+            
+            @Override
+            public void onAuthenticationFailed() {
+                super.onAuthenticationFailed();
+                // Also triggers the trap on Biometric Failure (Wrong Finger)
+                triggerIntruderAlert();
             }
         });
 
         BiometricPrompt.PromptInfo.Builder builder = new BiometricPrompt.PromptInfo.Builder()
                 .setTitle("HFS Security")
-                .setSubtitle("Authenticate to access your app");
+                .setSubtitle("Unlock to proceed");
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             builder.setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG 
@@ -171,6 +222,7 @@ public class LockScreenActivity extends AppCompatActivity {
     }
 
     private void processIntruderResponse(String mapLink) {
+        // If launched via "Ambush", change the name for the SMS
         String appName = getIntent().getStringExtra("TARGET_APP_NAME");
         if (appName == null) appName = "Protected Files";
 
@@ -186,9 +238,11 @@ public class LockScreenActivity extends AppCompatActivity {
         }
 
         runOnUiThread(() -> {
-            binding.lockContainer.setVisibility(View.VISIBLE);
+            // Re-prompt user to keep them trapped in the loop until correct auth
             Toast.makeText(this, "⚠ Security Breach Recorded", Toast.LENGTH_LONG).show();
-            biometricPrompt.authenticate(promptInfo);
+            // Reset action taken to allow multiple photos if they keep failing
+            isActionTaken = false; 
+            triggerSystemAuth();
         });
     }
 
