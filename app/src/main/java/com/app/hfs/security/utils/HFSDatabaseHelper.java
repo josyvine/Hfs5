@@ -12,9 +12,7 @@ import java.util.Set;
 
 /**
  * Manages local persistent storage for HFS Security.
- * UPDATED for Google Drive Integration:
- * 1. Added keys for Cloud Sync status and Google Account management.
- * 2. Maintained all existing MPIN and Protection Package logic.
+ * UPDATED: Added KEY_PHONE_PROTECTION for the new System Unlock Ambush feature.
  */
 public class HFSDatabaseHelper {
 
@@ -29,7 +27,10 @@ public class HFSDatabaseHelper {
     private static final String KEY_FAKE_GALLERY = "fake_gallery_enabled";
     private static final String KEY_OWNER_FACE_DATA = "owner_face_template";
 
-    // NEW: Google Drive Cloud Sync Keys
+    // NEW: System Lock Screen Protection Key
+    private static final String KEY_PHONE_PROTECTION = "phone_protection_enabled";
+
+    // Google Drive Cloud Sync Keys
     private static final String KEY_DRIVE_ENABLED = "drive_sync_enabled";
     private static final String KEY_GOOGLE_ACCOUNT = "google_account_email";
     private static final String KEY_DRIVE_FOLDER_ID = "google_drive_folder_id";
@@ -48,6 +49,16 @@ public class HFSDatabaseHelper {
             instance = new HFSDatabaseHelper(context.getApplicationContext());
         }
         return instance;
+    }
+
+    // --- SYSTEM PHONE UNLOCK PROTECTION (NEW) ---
+
+    public void setPhoneProtectionEnabled(boolean enabled) {
+        prefs.edit().putBoolean(KEY_PHONE_PROTECTION, enabled).apply();
+    }
+
+    public boolean isPhoneProtectionEnabled() {
+        return prefs.getBoolean(KEY_PHONE_PROTECTION, false);
     }
 
     // --- GOOGLE DRIVE / CLOUD SETTINGS ---
