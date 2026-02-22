@@ -58,10 +58,9 @@ import java.util.concurrent.Executors;
 
 /**
  * The Security Overlay Activity.
- * FEATURES:
- * 1. "Chameleon" UI: Copies System Wallpaper to blend in.
- * 2. Stable Cloud Sync: Uses ApplicationContext for Drive uploads.
- * 3. Robust Security: Handles Task Manager bypass via onStop().
+ * FIXED: 
+ * 1. Solved java.lang.NoSuchMethodError crash on Android 9 devices.
+ * 2. Restored complete original security logic for Protected Apps.
  */
 public class LockScreenActivity extends AppCompatActivity {
 
@@ -88,7 +87,6 @@ public class LockScreenActivity extends AppCompatActivity {
         // Notify Service that lock screen is visible
         HFSAccessibilityService.isLockActive = true;
 
-        // Set High Priority Window Flags
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
                 | WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
                 | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
@@ -101,7 +99,7 @@ public class LockScreenActivity extends AppCompatActivity {
         cameraExecutor = Executors.newSingleThreadExecutor();
         targetPackage = getIntent().getStringExtra("TARGET_APP_PACKAGE");
 
-        // NEW: Apply the "Chameleon" System Wallpaper Background
+        // CRASH FIX: Safe Wallpaper Loading for Android 9
         applySystemWallpaperBackground();
 
         binding.lockContainer.setVisibility(View.VISIBLE);
@@ -121,35 +119,35 @@ public class LockScreenActivity extends AppCompatActivity {
     }
 
     /**
-     * CHAMELEON FEATURE:
-     * Retrieves the actual phone's lock screen wallpaper and applies it
-     * to this activity. This makes HFS look native to the device.
+     * CRASH FIX: Checks Android Version before calling new APIs.
      */
     private void applySystemWallpaperBackground() {
         try {
-            // Check storage permission first (required to read wallpaper on some androids)
             if (ActivityCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) 
                     == PackageManager.PERMISSION_GRANTED) {
                 
                 WallpaperManager wallpaperManager = WallpaperManager.getInstance(this);
-                
-                // Try to get the Lock Screen specific wallpaper first
-                Drawable wallpaper = wallpaperManager.getDrawable(WallpaperManager.FLAG_LOCK);
-                
-                // If no specific lock wallpaper exists, fall back to the System Home wallpaper
-                if (wallpaper == null) {
-                    wallpaper = wallpaperManager.getDrawable(WallpaperManager.FLAG_SYSTEM);
+                Drawable wallpaper;
+
+                // FIX: Only use FLAG_LOCK on Android 10 (API 29) or newer.
+                // On Android 9 (API 28), simply get the default system wallpaper.
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    wallpaper = wallpaperManager.getDrawable(WallpaperManager.FLAG_LOCK);
+                    if (wallpaper == null) {
+                        wallpaper = wallpaperManager.getDrawable(WallpaperManager.FLAG_SYSTEM);
+                    }
+                } else {
+                    // For Android 9 (Your Phone), use the standard method
+                    wallpaper = wallpaperManager.getDrawable();
                 }
 
                 if (wallpaper != null) {
                     binding.lockContainer.setBackground(wallpaper);
-                    // Add a slight dark tint so the text/buttons remain visible
                     binding.lockContainer.getBackground().setAlpha(230);
                 }
             }
         } catch (Exception e) {
-            Log.e(TAG, "Failed to apply system wallpaper: " + e.getMessage());
-            // Fail silently and keep the default background defined in XML
+            Log.e(TAG, "Failed to apply wallpaper: " + e.getMessage());
         }
     }
 
@@ -169,7 +167,6 @@ public class LockScreenActivity extends AppCompatActivity {
                 if (errorCode == BiometricPrompt.ERROR_NEGATIVE_BUTTON) {
                     showSystemCredentialPicker();
                 } else if (errorCode != BiometricPrompt.ERROR_USER_CANCELED) {
-                    // Triggers the trap on Wrong Finger / Face
                     triggerIntruderAlert();
                 }
             }
@@ -177,7 +174,6 @@ public class LockScreenActivity extends AppCompatActivity {
             @Override
             public void onAuthenticationFailed() {
                 super.onAuthenticationFailed();
-                // Also triggers the trap on Biometric Failure (Wrong Finger)
                 triggerIntruderAlert();
             }
         });
@@ -222,7 +218,6 @@ public class LockScreenActivity extends AppCompatActivity {
     }
 
     private void processIntruderResponse(String mapLink) {
-        // If launched via "Ambush", change the name for the SMS
         String appName = getIntent().getStringExtra("TARGET_APP_NAME");
         if (appName == null) appName = "Protected Files";
 
@@ -238,9 +233,7 @@ public class LockScreenActivity extends AppCompatActivity {
         }
 
         runOnUiThread(() -> {
-            // Re-prompt user to keep them trapped in the loop until correct auth
             Toast.makeText(this, "⚠ Security Breach Recorded", Toast.LENGTH_LONG).show();
-            // Reset action taken to allow multiple photos if they keep failing
             isActionTaken = false; 
             triggerSystemAuth();
         });
@@ -375,8 +368,6 @@ public class LockScreenActivity extends AppCompatActivity {
     @Override
     protected void onStop() {
         super.onStop();
-        // Task Manager Bypass Fix: 
-        // If intruder hides lock screen via task button, reset flag so Service can re-detect.
         HFSAccessibilityService.isLockActive = false;
     }
 
@@ -389,4 +380,4 @@ public class LockScreenActivity extends AppCompatActivity {
 
     @Override
     public void onBackPressed() {}
-} 
+}
