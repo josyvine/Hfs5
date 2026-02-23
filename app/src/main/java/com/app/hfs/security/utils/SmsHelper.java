@@ -2,8 +2,11 @@ package com.hfs.security.utils;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.os.Handler;
+import android.os.Looper;
 import android.telephony.SmsManager;
 import android.util.Log;
+import android.widget.Toast;
 
 import java.io.File;
 import java.text.SimpleDateFormat;
@@ -19,6 +22,7 @@ import java.util.Locale;
  * 4. NEW: Decrypts emergency number securely in memory.
  * 5. NEW: Uses SimManager for Dual SIM Routing (Survivor Logic).
  * 6. NEW: Queues message if no SIM is available (Time Bomb Trap).
+ * 7. NEW: Visual feedback via Toasts for offline queuing status.
  */
 public class SmsHelper {
 
@@ -46,7 +50,7 @@ public class SmsHelper {
 
         HFSDatabaseHelper db = HFSDatabaseHelper.getInstance(context);
         
-        // --- NEW: SECURE NUMBER DECRYPTION ---
+        // --- SECURE NUMBER DECRYPTION ---
         String savedNumber = db.getEncryptedEmergencyNumber();
         if (savedNumber != null && !savedNumber.isEmpty()) {
             CryptoManager cryptoManager = new CryptoManager();
@@ -89,7 +93,7 @@ public class SmsHelper {
 
         // 4. EXECUTE SEND WITH DUAL SIM ROUTING
         try {
-            // --- NEW: DUAL SIM "SURVIVOR" ROUTING ---
+            // DUAL SIM "SURVIVOR" ROUTING
             SimManager simManager = new SimManager(context);
             SmsManager smsManager = simManager.getBestSmsManager();
 
@@ -103,20 +107,24 @@ public class SmsHelper {
                 // UPDATE COOLDOWN COUNTER
                 trackSmsSent(context);
             } else {
-                // --- NEW: THE TIME BOMB QUEUE ---
-                // No SIM card is available (Thief pulled both). Save to queue.
+                // THE TIME BOMB QUEUE
+                // No SIM card is available (Thief pulled both or Airplane Mode). Save to queue.
                 db.savePendingMessage(smsBody.toString());
-                Log.w(TAG, "No SIM available. SMS queued for auto-send upon intruder SIM insertion.");
+                Log.w(TAG, "No SIM available. SMS queued for auto-send.");
+
+                // VISUAL FEEDBACK: Show user that the alert is saved for later
+                showToastOnMainThread(context, "Network Unavailable: Alert Queued for Auto-Send");
             }
         } catch (Exception e) {
-            Log.e(TAG, "Carrier Block or SIM Error: Failed to deliver external SMS: " + e.getMessage());
+            Log.e(TAG, "Carrier Block or SIM Error: Failed to deliver: " + e.getMessage());
             // If it failed due to some other hardware error, queue it just in case
             db.savePendingMessage(smsBody.toString());
+            showToastOnMainThread(context, "SIM Error: Alert Queued for Recovery");
         }
     }
 
     /**
-     * NEW: Executes the "Time Bomb" trap.
+     * Executes the "Time Bomb" trap.
      * Called by SimStateReceiver when the intruder inserts their own SIM card.
      */
     public static void sendQueuedMessage(Context context) {
@@ -151,10 +159,20 @@ public class SmsHelper {
                 
                 // Clear the queue so we don't spam it
                 db.clearPendingMessage();
+                showToastOnMainThread(context, "Security Alert Sent via Intruder SIM");
             }
         } catch (Exception e) {
             Log.e(TAG, "Failed to send queued SMS: " + e.getMessage());
         }
+    }
+
+    /**
+     * Helper to show Toasts correctly even when called from background threads.
+     */
+    private static void showToastOnMainThread(Context context, String message) {
+        new Handler(Looper.getMainLooper()).post(() -> 
+            Toast.makeText(context, "HFS: " + message, Toast.LENGTH_LONG).show()
+        );
     }
 
     /**
