@@ -18,6 +18,8 @@ import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AlertDialog;
+import androidx.biometric.BiometricPrompt;
+import androidx.core.content.ContextCompat;
 import androidx.fragment.app.Fragment;
 
 import com.google.android.gms.auth.api.signin.GoogleSignIn;
@@ -31,14 +33,16 @@ import com.hfs.security.R;
 import com.hfs.security.databinding.FragmentSettingsBinding;
 import com.hfs.security.receivers.AdminReceiver;
 import com.hfs.security.ui.SplashActivity;
+import com.hfs.security.utils.CryptoManager;
 import com.hfs.security.utils.HFSDatabaseHelper;
+import com.hfs.security.utils.SimManager;
+
+import java.util.concurrent.Executor;
 
 /**
  * Advanced Settings Screen for HFS Security.
- * UPDATED for Google Drive:
- * 1. Implemented Google Sign-In with Drive.File scope.
- * 2. Manages Cloud Sync toggle and account status.
- * 3. Maintains MPIN, Trusted Number, and Anti-Uninstall logic.
+ * UPDATED: Integrated Anti-Theft UI (Encrypted Emergency Number & Dual SIM Vault)
+ * without altering existing Google Drive or App Lock logic.
  */
 public class SettingsFragment extends Fragment {
 
@@ -50,6 +54,13 @@ public class SettingsFragment extends Fragment {
     // Google Drive Auth variables
     private GoogleSignInClient googleSignInClient;
     private ActivityResultLauncher<Intent> driveSignInLauncher;
+
+    // --- NEW: ANTI-THEFT VARIABLES ---
+    private CryptoManager cryptoManager;
+    private SimManager simManager;
+    private Executor biometricExecutor;
+    private BiometricPrompt biometricPrompt;
+    private BiometricPrompt.PromptInfo promptInfo;
 
     @Override
     public void onCreate(@Nullable Bundle savedInstanceState) {
@@ -83,9 +94,17 @@ public class SettingsFragment extends Fragment {
         devicePolicyManager = (DevicePolicyManager) requireContext().getSystemService(Context.DEVICE_POLICY_SERVICE);
         adminComponent = new ComponentName(requireContext(), AdminReceiver.class);
 
+        // Initialize new Hardware Security Managers
+        cryptoManager = new CryptoManager();
+        simManager = new SimManager(requireContext());
+
         setupGoogleSignInClient();
         loadSettings();
         setupListeners();
+        
+        // --- NEW: Initialize Anti-Theft Interface ---
+        setupBiometricsForEditing();
+        setupAntiTheftUI();
     }
 
     private void setupGoogleSignInClient() {
@@ -97,6 +116,7 @@ public class SettingsFragment extends Fragment {
     }
 
     private void loadSettings() {
+        // Legacy Plain Text loading (Untouched)
         binding.etTrustedNumber.setText(db.getTrustedNumber());
         binding.etSecretPin.setText(db.getMasterPin());
         
@@ -218,6 +238,117 @@ public class SettingsFragment extends Fragment {
 
     private void deactivateDeviceAdmin() {
         devicePolicyManager.removeActiveAdmin(adminComponent);
+    }
+
+    // =========================================================================
+    // --- NEW: ANTI-THEFT UI METHODS (Does not affect code above) ---
+    // =========================================================================
+
+    private void setupBiometricsForEditing() {
+        biometricExecutor = ContextCompat.getMainExecutor(requireContext());
+        biometricPrompt = new BiometricPrompt(this, biometricExecutor, new BiometricPrompt.AuthenticationCallback() {
+            @Override
+            public void onAuthenticationSucceeded(@NonNull BiometricPrompt.AuthenticationResult result) {
+                super.onAuthenticationSucceeded(result);
+                unlockEmergencyField();
+            }
+
+            @Override
+            public void onAuthenticationError(int errorCode, @NonNull CharSequence errString) {
+                super.onAuthenticationError(errorCode, errString);
+                Toast.makeText(getContext(), "Authentication required to edit", Toast.LENGTH_SHORT).show();
+            }
+        });
+
+        promptInfo = new BiometricPrompt.PromptInfo.Builder()
+                .setTitle("Security Verification")
+                .setSubtitle("Verify identity to access Hardware Vault")
+                .setNegativeButtonText("Cancel")
+                .build();
+    }
+
+    private void setupAntiTheftUI() {
+        // Prevent crashes if UI elements aren't added to XML yet
+        if (binding.switchAntiTheft == null || binding.etEmergencyNumber == null) return;
+
+        // 1. Master Anti-Theft Switch
+        binding.switchAntiTheft.setChecked(db.isAntiTheftEnabled());
+        binding.switchAntiTheft.setOnCheckedChangeListener((btn, isChecked) -> {
+            db.setAntiTheftEnabled(isChecked);
+            if (isChecked) {
+                Toast.makeText(getContext(), "Hardware Watchdogs Armed", Toast.LENGTH_SHORT).show();
+            }
+        });
+
+        // 2. Encrypted Emergency Number Initial State
+        lockEmergencyField();
+
+        // 3. Edit / Cancel Button
+        binding.btnEditEmergency.setOnClickListener(v -> {
+            if (binding.btnEditEmergency.getText().toString().equals("UNLOCK")) {
+                biometricPrompt.authenticate(promptInfo);
+            } else {
+                // If already unlocked, clicking it again cancels the edit
+                lockEmergencyField();
+            }
+        });
+
+        // 4. Save & Encrypt Button
+        binding.btnSaveEmergency.setOnClickListener(v -> {
+            String rawNumber = binding.etEmergencyNumber.getText().toString().trim();
+            if (rawNumber.length() < 5) {
+                Toast.makeText(getContext(), "Invalid Number", Toast.LENGTH_SHORT).show();
+                return;
+            }
+
+            String cipherText = cryptoManager.encrypt(rawNumber);
+            if (cipherText != null) {
+                db.saveEncryptedEmergencyNumber(cipherText);
+                Toast.makeText(getContext(), "Number Encrypted & Locked in Vault", Toast.LENGTH_LONG).show();
+                lockEmergencyField();
+            } else {
+                Toast.makeText(getContext(), "Hardware Encryption Failed", Toast.LENGTH_SHORT).show();
+            }
+        });
+
+        // 5. Update Trusted SIMs Button
+        binding.btnUpdateSims.setOnClickListener(v -> {
+            if (simManager.hasPhoneStatePermission(requireContext())) {
+                simManager.scanAndEncryptCurrentSims();
+                Toast.makeText(getContext(), "Current SIMs Scanned & Encrypted", Toast.LENGTH_SHORT).show();
+            } else {
+                simManager.requestPhoneStatePermission(requireActivity());
+            }
+        });
+    }
+
+    private void unlockEmergencyField() {
+        String cipherText = db.getEncryptedEmergencyNumber();
+        if (cipherText != null) {
+            String plainText = cryptoManager.decrypt(cipherText);
+            binding.etEmergencyNumber.setText(plainText != null ? plainText : "");
+        } else {
+            binding.etEmergencyNumber.setText("");
+        }
+        
+        binding.etEmergencyNumber.setEnabled(true);
+        binding.btnEditEmergency.setText("CANCEL");
+        binding.btnSaveEmergency.setVisibility(View.VISIBLE);
+    }
+
+    private void lockEmergencyField() {
+        String encryptedNum = db.getEncryptedEmergencyNumber();
+        
+        binding.etEmergencyNumber.setEnabled(false);
+        binding.btnSaveEmergency.setVisibility(View.GONE);
+        binding.btnEditEmergency.setText("UNLOCK");
+        
+        if (encryptedNum != null && !encryptedNum.isEmpty()) {
+            binding.etEmergencyNumber.setText("•••• ••• •••"); // Masked
+        } else {
+            binding.etEmergencyNumber.setText("");
+            binding.etEmergencyNumber.setHint("Tap UNLOCK to setup");
+        }
     }
 
     @Override
