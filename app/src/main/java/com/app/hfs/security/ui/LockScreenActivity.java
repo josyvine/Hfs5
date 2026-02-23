@@ -9,13 +9,13 @@ import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.drawable.Drawable;
 import android.media.AudioManager;
-import android.media.MediaPlayer;
-import android.media.RingtoneManager;
+import android.media.ToneGenerator;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
-import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import android.view.View;
 import android.view.WindowManager;
@@ -64,10 +64,10 @@ import java.util.concurrent.Executors;
 /**
  * The Security Overlay Activity.
  * FEATURES:
- * 1. "Chameleon" UI: Copies System Wallpaper to blend in (Normal Mode).
- * 2. Stable Cloud Sync: Uses ApplicationContext for Drive uploads.
- * 3. Robust Security: Handles Task Manager bypass via onStop().
- * 4. NEW: "Siren Mode": Aggressive alarm for hardware theft events.
+ * 1. "Chameleon" UI: Native wallpaper background (Android 9 safe).
+ * 2. Stable Cloud Sync: Fixed background timing for Drive URLs.
+ * 3. Fearful SOS: Uses ToneGenerator for hardware emergency signals.
+ * 4. Robust Security: Task Manager bypass prevention.
  */
 public class LockScreenActivity extends AppCompatActivity {
 
@@ -87,18 +87,17 @@ public class LockScreenActivity extends AppCompatActivity {
     private BiometricPrompt biometricPrompt;
     private BiometricPrompt.PromptInfo promptInfo;
 
-    // --- NEW: THEFT MODE VARIABLES ---
+    // --- THEFT MODE & SOS ---
     private boolean isTheftMode = false;
-    private MediaPlayer mediaPlayer;
+    private ToneGenerator toneGenerator;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // Notify Service that lock screen is visible
+        // Notify Service that lock screen is active
         HFSAccessibilityService.isLockActive = true;
 
-        // Set High Priority Window Flags
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
                 | WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
                 | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
@@ -111,88 +110,72 @@ public class LockScreenActivity extends AppCompatActivity {
         cameraExecutor = Executors.newSingleThreadExecutor();
         targetPackage = getIntent().getStringExtra("TARGET_APP_PACKAGE");
         
-        // Check if launched by SIM/Airplane Receiver
+        // Mode Switch: Check if triggered by Hardware Watchdogs
         isTheftMode = "THEFT_MODE".equals(getIntent().getStringExtra("EXTRA_MODE"));
 
         if (isTheftMode) {
-            // Trigger aggressive Siren UI
-            activateTheftModeUI();
+            // Activate aggressive SOS logic
+            activateFearfulSiren();
         } else {
-            // Normal App Lock: Apply the "Chameleon" System Wallpaper Background
+            // Normal App Lock: Apply native look
             applySystemWallpaperBackground();
         }
 
         binding.lockContainer.setVisibility(View.VISIBLE);
 
-        // 1. Initialize background camera capture
+        // 1. Start background capture
         startInvisibleCamera();
 
-        // 2. Configure System Biometrics
+        // 2. Setup Security
         setupSystemSecurity();
 
-        // 3. Start authentication immediately
+        // 3. Start authentication
         triggerSystemAuth();
 
         binding.btnUnlockPin.setOnClickListener(v -> checkMpinAndUnlock());
-        
         binding.btnFingerprint.setOnClickListener(v -> triggerSystemAuth());
     }
 
-    // =========================================================================
-    // --- NEW: THEFT MODE LOGIC (Siren & Aggressive UI) ---
-    // =========================================================================
-
-    private void activateTheftModeUI() {
+    /**
+     * SOS INVENTION:
+     * Uses hardware-level ToneGenerator to create a fearful, high-pitched 
+     * emergency alarm that bypasses normal ringtone settings.
+     */
+    private void activateFearfulSiren() {
         try {
-            // 1. Turn background aggressive Red to panic the thief
             binding.lockContainer.setBackgroundColor(Color.parseColor("#AA0000"));
 
-            // 2. Force Max Screen Brightness
             WindowManager.LayoutParams layoutParams = getWindow().getAttributes();
             layoutParams.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_FULL;
             getWindow().setAttributes(layoutParams);
 
-            // 3. Force Max Volume on the ALARM stream (bypasses silent mode)
             AudioManager audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
             if (audioManager != null) {
                 int maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM);
                 audioManager.setStreamVolume(AudioManager.STREAM_ALARM, maxVolume, 0);
             }
 
-            // 4. Play standard device alarm sound in a continuous loop
-            Uri alarmUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM);
-            if (alarmUri == null) {
-                alarmUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE);
-            }
+            // Initialize hardware ToneGenerator on the ALARM stream at 100% volume
+            toneGenerator = new ToneGenerator(AudioManager.STREAM_ALARM, 100);
             
-            mediaPlayer = new MediaPlayer();
-            mediaPlayer.setDataSource(this, alarmUri);
-            mediaPlayer.setAudioStreamType(AudioManager.STREAM_ALARM);
-            mediaPlayer.setLooping(true);
-            mediaPlayer.prepare();
-            mediaPlayer.start();
+            // Continuous high-pitched emergency ringback tone
+            toneGenerator.startTone(ToneGenerator.TONE_CDMA_EMERGENCY_RINGBACK);
 
         } catch (Exception e) {
-            Log.e(TAG, "Failed to activate Theft Mode Siren: " + e.getMessage());
+            Log.e(TAG, "SOS Alarm failed: " + e.getMessage());
         }
     }
 
-    private void stopSiren() {
-        if (mediaPlayer != null) {
-            if (mediaPlayer.isPlaying()) {
-                mediaPlayer.stop();
-            }
-            mediaPlayer.release();
-            mediaPlayer = null;
+    private void stopFearfulSiren() {
+        if (toneGenerator != null) {
+            toneGenerator.stopTone();
+            toneGenerator.release();
+            toneGenerator = null;
         }
     }
-
-    // =========================================================================
-    // --- EXISTING NORMAL LOGIC (UNTOUCHED) ---
-    // =========================================================================
 
     /**
-     * CRASH FIX: Checks Android Version before calling new APIs.
+     * Chameleon UI for Android 9 & 10.
      */
     private void applySystemWallpaperBackground() {
         try {
@@ -202,15 +185,10 @@ public class LockScreenActivity extends AppCompatActivity {
                 WallpaperManager wallpaperManager = WallpaperManager.getInstance(this);
                 Drawable wallpaper;
 
-                // FIX: Only use FLAG_LOCK on Android 10 (API 29) or newer.
-                // On Android 9 (API 28), simply get the default system wallpaper.
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     wallpaper = wallpaperManager.getDrawable(WallpaperManager.FLAG_LOCK);
-                    if (wallpaper == null) {
-                        wallpaper = wallpaperManager.getDrawable(WallpaperManager.FLAG_SYSTEM);
-                    }
+                    if (wallpaper == null) wallpaper = wallpaperManager.getDrawable(WallpaperManager.FLAG_SYSTEM);
                 } else {
-                    // For Android 9 (Your Phone), use the standard method
                     wallpaper = wallpaperManager.getDrawable();
                 }
 
@@ -220,7 +198,7 @@ public class LockScreenActivity extends AppCompatActivity {
                 }
             }
         } catch (Exception e) {
-            Log.e(TAG, "Failed to apply wallpaper: " + e.getMessage());
+            Log.e(TAG, "Wallpaper failure: " + e.getMessage());
         }
     }
 
@@ -296,13 +274,14 @@ public class LockScreenActivity extends AppCompatActivity {
 
         boolean isDriveReady = db.isDriveEnabled() && db.getGoogleAccount() != null;
 
+        // DRIVE LINK FIX:
+        // We only send the SMS immediately if Drive is NOT ready.
+        // If Drive IS ready, we let the background thread handle the SMS to ensure the link is included.
         if (isDriveReady && isNetworkAvailable()) {
             uploadToCloudAndSms(appName, mapLink);
-        } else if (isDriveReady) {
-            queueBackgroundUpload();
-            SmsHelper.sendAlertSms(this, appName, mapLink, "Security Breach", null);
         } else {
-            SmsHelper.sendAlertSms(this, appName, mapLink, "Security Breach", null);
+            if (isDriveReady) queueBackgroundUpload();
+            SmsHelper.sendAlertSms(getApplicationContext(), appName, mapLink, "Security Breach", null);
         }
 
         runOnUiThread(() -> {
@@ -315,7 +294,10 @@ public class LockScreenActivity extends AppCompatActivity {
     private void uploadToCloudAndSms(String appName, String mapLink) {
         cameraExecutor.execute(() -> {
             try {
-                if (intruderFile == null || !intruderFile.exists()) return;
+                if (intruderFile == null || !intruderFile.exists()) {
+                    SmsHelper.sendAlertSms(getApplicationContext(), appName, mapLink, "Security Breach", null);
+                    return;
+                }
 
                 GoogleSignInAccount account = GoogleSignIn.getLastSignedInAccount(getApplicationContext());
                 if (account == null) throw new Exception("Google Account Disconnected");
@@ -332,19 +314,17 @@ public class LockScreenActivity extends AppCompatActivity {
                         .build();
 
                 DriveHelper driveHelper = new DriveHelper(getApplicationContext(), driveService);
+                
+                // CRITICAL FIX: The SMS is now strictly inside this block.
+                // It will WAIT here until the link is returned from Google Drive.
                 String driveLink = driveHelper.uploadFileAndGetLink(intruderFile);
-
+                
                 SmsHelper.sendAlertSms(getApplicationContext(), appName, mapLink, "Security Breach", driveLink);
 
             } catch (Exception e) {
-                String errorMsg = e.getMessage();
-                Log.e(TAG, "Cloud upload failed: " + errorMsg);
-                
-                runOnUiThread(() -> 
-                    Toast.makeText(getApplicationContext(), "Upload Failed: " + errorMsg, Toast.LENGTH_LONG).show()
-                );
-
+                Log.e(TAG, "Cloud upload error: " + e.getMessage());
                 queueBackgroundUpload();
+                // Send SMS with null link only if the upload definitively failed
                 SmsHelper.sendAlertSms(getApplicationContext(), appName, mapLink, "Security Breach", null);
             }
         });
@@ -352,15 +332,8 @@ public class LockScreenActivity extends AppCompatActivity {
 
     private void queueBackgroundUpload() {
         if (intruderFile == null) return;
-
-        Data inputData = new Data.Builder()
-                .putString("file_path", intruderFile.getAbsolutePath())
-                .build();
-
-        OneTimeWorkRequest uploadRequest = new OneTimeWorkRequest.Builder(DriveUploadWorker.class)
-                .setInputData(inputData)
-                .build();
-
+        Data inputData = new Data.Builder().putString("file_path", intruderFile.getAbsolutePath()).build();
+        OneTimeWorkRequest uploadRequest = new OneTimeWorkRequest.Builder(DriveUploadWorker.class).setInputData(inputData).build();
         WorkManager.getInstance(this).enqueue(uploadRequest);
     }
 
@@ -371,9 +344,7 @@ public class LockScreenActivity extends AppCompatActivity {
     }
 
     private void startInvisibleCamera() {
-        ListenableFuture<ProcessCameraProvider> cameraProviderFuture = 
-                ProcessCameraProvider.getInstance(this);
-
+        ListenableFuture<ProcessCameraProvider> cameraProviderFuture = ProcessCameraProvider.getInstance(this);
         cameraProviderFuture.addListener(() -> {
             try {
                 ProcessCameraProvider cameraProvider = cameraProviderFuture.get();
@@ -397,15 +368,14 @@ public class LockScreenActivity extends AppCompatActivity {
                 CameraSelector cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA;
                 cameraProvider.unbindAll();
                 cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageAnalysis);
-
-            } catch (ExecutionException | InterruptedException e) {
-                Log.e(TAG, "CameraX Initialization Error");
+            } catch (Exception e) {
+                Log.e(TAG, "CameraX Error");
             }
         }, ContextCompat.getMainExecutor(this));
     }
 
     private void onOwnerVerified() {
-        stopSiren(); // Kill noise instantly on success
+        stopFearfulSiren(); // Kill noise instantly
         HFSAccessibilityService.isLockActive = false;
         if (targetPackage != null) {
             HFSAccessibilityService.unlockSession(targetPackage);
@@ -447,7 +417,7 @@ public class LockScreenActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
-        stopSiren(); // Ensure alarm dies if activity is killed
+        stopFearfulSiren(); // Clean up hardware tones
         cameraExecutor.shutdown();
         HFSAccessibilityService.isLockActive = false;
         super.onDestroy();
