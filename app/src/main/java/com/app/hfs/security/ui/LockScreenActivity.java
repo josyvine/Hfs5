@@ -6,9 +6,14 @@ import android.app.WallpaperManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.graphics.Color;
 import android.graphics.drawable.Drawable;
+import android.media.AudioManager;
+import android.media.MediaPlayer;
+import android.media.RingtoneManager;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
@@ -58,9 +63,11 @@ import java.util.concurrent.Executors;
 
 /**
  * The Security Overlay Activity.
- * FIXED: 
- * 1. Solved java.lang.NoSuchMethodError crash on Android 9 devices.
- * 2. Restored complete original security logic for Protected Apps.
+ * FEATURES:
+ * 1. "Chameleon" UI: Copies System Wallpaper to blend in (Normal Mode).
+ * 2. Stable Cloud Sync: Uses ApplicationContext for Drive uploads.
+ * 3. Robust Security: Handles Task Manager bypass via onStop().
+ * 4. NEW: "Siren Mode": Aggressive alarm for hardware theft events.
  */
 public class LockScreenActivity extends AppCompatActivity {
 
@@ -80,6 +87,10 @@ public class LockScreenActivity extends AppCompatActivity {
     private BiometricPrompt biometricPrompt;
     private BiometricPrompt.PromptInfo promptInfo;
 
+    // --- NEW: THEFT MODE VARIABLES ---
+    private boolean isTheftMode = false;
+    private MediaPlayer mediaPlayer;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -87,6 +98,7 @@ public class LockScreenActivity extends AppCompatActivity {
         // Notify Service that lock screen is visible
         HFSAccessibilityService.isLockActive = true;
 
+        // Set High Priority Window Flags
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
                 | WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
                 | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
@@ -98,9 +110,17 @@ public class LockScreenActivity extends AppCompatActivity {
         db = HFSDatabaseHelper.getInstance(this);
         cameraExecutor = Executors.newSingleThreadExecutor();
         targetPackage = getIntent().getStringExtra("TARGET_APP_PACKAGE");
+        
+        // Check if launched by SIM/Airplane Receiver
+        isTheftMode = "THEFT_MODE".equals(getIntent().getStringExtra("EXTRA_MODE"));
 
-        // CRASH FIX: Safe Wallpaper Loading for Android 9
-        applySystemWallpaperBackground();
+        if (isTheftMode) {
+            // Trigger aggressive Siren UI
+            activateTheftModeUI();
+        } else {
+            // Normal App Lock: Apply the "Chameleon" System Wallpaper Background
+            applySystemWallpaperBackground();
+        }
 
         binding.lockContainer.setVisibility(View.VISIBLE);
 
@@ -117,6 +137,59 @@ public class LockScreenActivity extends AppCompatActivity {
         
         binding.btnFingerprint.setOnClickListener(v -> triggerSystemAuth());
     }
+
+    // =========================================================================
+    // --- NEW: THEFT MODE LOGIC (Siren & Aggressive UI) ---
+    // =========================================================================
+
+    private void activateTheftModeUI() {
+        try {
+            // 1. Turn background aggressive Red to panic the thief
+            binding.lockContainer.setBackgroundColor(Color.parseColor("#AA0000"));
+
+            // 2. Force Max Screen Brightness
+            WindowManager.LayoutParams layoutParams = getWindow().getAttributes();
+            layoutParams.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_FULL;
+            getWindow().setAttributes(layoutParams);
+
+            // 3. Force Max Volume on the ALARM stream (bypasses silent mode)
+            AudioManager audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+            if (audioManager != null) {
+                int maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM);
+                audioManager.setStreamVolume(AudioManager.STREAM_ALARM, maxVolume, 0);
+            }
+
+            // 4. Play standard device alarm sound in a continuous loop
+            Uri alarmUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM);
+            if (alarmUri == null) {
+                alarmUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE);
+            }
+            
+            mediaPlayer = new MediaPlayer();
+            mediaPlayer.setDataSource(this, alarmUri);
+            mediaPlayer.setAudioStreamType(AudioManager.STREAM_ALARM);
+            mediaPlayer.setLooping(true);
+            mediaPlayer.prepare();
+            mediaPlayer.start();
+
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to activate Theft Mode Siren: " + e.getMessage());
+        }
+    }
+
+    private void stopSiren() {
+        if (mediaPlayer != null) {
+            if (mediaPlayer.isPlaying()) {
+                mediaPlayer.stop();
+            }
+            mediaPlayer.release();
+            mediaPlayer = null;
+        }
+    }
+
+    // =========================================================================
+    // --- EXISTING NORMAL LOGIC (UNTOUCHED) ---
+    // =========================================================================
 
     /**
      * CRASH FIX: Checks Android Version before calling new APIs.
@@ -332,6 +405,7 @@ public class LockScreenActivity extends AppCompatActivity {
     }
 
     private void onOwnerVerified() {
+        stopSiren(); // Kill noise instantly on success
         HFSAccessibilityService.isLockActive = false;
         if (targetPackage != null) {
             HFSAccessibilityService.unlockSession(targetPackage);
@@ -373,6 +447,7 @@ public class LockScreenActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
+        stopSiren(); // Ensure alarm dies if activity is killed
         cameraExecutor.shutdown();
         HFSAccessibilityService.isLockActive = false;
         super.onDestroy();
