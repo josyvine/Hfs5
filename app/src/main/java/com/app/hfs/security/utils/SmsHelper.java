@@ -12,10 +12,13 @@ import java.util.Locale;
 
 /**
  * Advanced Alert & SMS Transmission Utility.
- * UPDATED for Google Drive Integration:
+ * UPDATED for Google Drive Integration & Anti-Theft:
  * 1. Includes Google Drive shareable link in the alert content.
  * 2. Implements "Pending Upload" status for offline scenarios.
  * 3. Strictly follows the 3-msg/5-min cooldown and +91 formatting rules.
+ * 4. NEW: Decrypts emergency number securely in memory.
+ * 5. NEW: Uses SimManager for Dual SIM Routing (Survivor Logic).
+ * 6. NEW: Queues message if no SIM is available (Time Bomb Trap).
  */
 public class SmsHelper {
 
@@ -30,7 +33,7 @@ public class SmsHelper {
      * @param context App context.
      * @param targetApp Name of the app triggered.
      * @param mapLink Google Maps URL.
-     * @param alertType "Face Mismatch" or "Fingerprint Failure".
+     * @param alertType "Face Mismatch", "SIM CARD REMOVED", etc.
      * @param driveLink The shareable link to the photo (null if offline).
      */
     public static void sendAlertSms(Context context, String targetApp, String mapLink, String alertType, String driveLink) {
@@ -42,7 +45,16 @@ public class SmsHelper {
         }
 
         HFSDatabaseHelper db = HFSDatabaseHelper.getInstance(context);
-        String savedNumber = db.getTrustedNumber();
+        
+        // --- NEW: SECURE NUMBER DECRYPTION ---
+        String savedNumber = db.getEncryptedEmergencyNumber();
+        if (savedNumber != null && !savedNumber.isEmpty()) {
+            CryptoManager cryptoManager = new CryptoManager();
+            savedNumber = cryptoManager.decrypt(savedNumber);
+        } else {
+            // Legacy fallback if the user hasn't set up the new encrypted UI yet
+            savedNumber = db.getTrustedNumber();
+        }
 
         if (savedNumber == null || savedNumber.isEmpty()) {
             Log.e(TAG, "SMS Failure: No trusted number set in settings.");
@@ -72,31 +84,76 @@ public class SmsHelper {
         if (driveLink != null && !driveLink.isEmpty()) {
             smsBody.append("Drive: ").append(driveLink);
         } else {
-            // As per instruction: Show 'Pending Upload' if offline
             smsBody.append("Drive: Pending Upload");
         }
 
-        // 4. EXECUTE SEND
+        // 4. EXECUTE SEND WITH DUAL SIM ROUTING
         try {
-            SmsManager smsManager;
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-                smsManager = context.getSystemService(SmsManager.class);
-            } else {
-                smsManager = SmsManager.getDefault();
-            }
+            // --- NEW: DUAL SIM "SURVIVOR" ROUTING ---
+            SimManager simManager = new SimManager(context);
+            SmsManager smsManager = simManager.getBestSmsManager();
 
             if (smsManager != null) {
-                // Divide message into parts to ensure delivery of long URLs
+                // We have a working SIM! Send the message.
                 java.util.ArrayList<String> parts = smsManager.divideMessage(smsBody.toString());
                 smsManager.sendMultipartTextMessage(finalRecipient, null, parts, null, null);
                 
                 Log.i(TAG, "Full Cloud Alert sent to: " + finalRecipient);
                 
-                // 5. UPDATE COOLDOWN COUNTER
+                // UPDATE COOLDOWN COUNTER
                 trackSmsSent(context);
+            } else {
+                // --- NEW: THE TIME BOMB QUEUE ---
+                // No SIM card is available (Thief pulled both). Save to queue.
+                db.savePendingMessage(smsBody.toString());
+                Log.w(TAG, "No SIM available. SMS queued for auto-send upon intruder SIM insertion.");
             }
         } catch (Exception e) {
-            Log.e(TAG, "Carrier Block: Failed to deliver external SMS: " + e.getMessage());
+            Log.e(TAG, "Carrier Block or SIM Error: Failed to deliver external SMS: " + e.getMessage());
+            // If it failed due to some other hardware error, queue it just in case
+            db.savePendingMessage(smsBody.toString());
+        }
+    }
+
+    /**
+     * NEW: Executes the "Time Bomb" trap.
+     * Called by SimStateReceiver when the intruder inserts their own SIM card.
+     */
+    public static void sendQueuedMessage(Context context) {
+        HFSDatabaseHelper db = HFSDatabaseHelper.getInstance(context);
+        
+        if (!db.hasPendingMessage()) return;
+
+        String queuedMessage = db.getPendingMessage();
+        if (queuedMessage == null || queuedMessage.isEmpty()) return;
+
+        String savedNumber = db.getEncryptedEmergencyNumber();
+        if (savedNumber != null && !savedNumber.isEmpty()) {
+            CryptoManager cryptoManager = new CryptoManager();
+            savedNumber = cryptoManager.decrypt(savedNumber);
+        } else {
+            savedNumber = db.getTrustedNumber();
+        }
+
+        if (savedNumber == null || savedNumber.isEmpty()) return;
+
+        String finalRecipient = formatInternationalNumber(savedNumber);
+
+        try {
+            SimManager simManager = new SimManager(context);
+            SmsManager smsManager = simManager.getBestSmsManager();
+
+            if (smsManager != null) {
+                java.util.ArrayList<String> parts = smsManager.divideMessage(queuedMessage);
+                smsManager.sendMultipartTextMessage(finalRecipient, null, parts, null, null);
+                
+                Log.i(TAG, "TRAP SPRUNG: Queued SMS sent using Intruder's SIM card.");
+                
+                // Clear the queue so we don't spam it
+                db.clearPendingMessage();
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to send queued SMS: " + e.getMessage());
         }
     }
 
