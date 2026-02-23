@@ -23,13 +23,23 @@ public class HFSDatabaseHelper {
     private static final String KEY_FAKE_GALLERY = "fake_gallery_enabled";
     private static final String KEY_OWNER_FACE_DATA = "owner_face_template";
 
-    // NEW: System Lock Screen Protection Key
+    // System Lock Screen Protection Key
     private static final String KEY_PHONE_PROTECTION = "phone_protection_enabled";
 
     // Google Drive Cloud Sync Keys
     private static final String KEY_DRIVE_ENABLED = "drive_sync_enabled";
     private static final String KEY_GOOGLE_ACCOUNT = "google_account_email";
     private static final String KEY_DRIVE_FOLDER_ID = "google_drive_folder_id";
+
+    // --- NEW: ANTI-THEFT & HARDWARE SECURITY KEYS ---
+    private static final String KEY_ANTI_THEFT_ENABLED = "anti_theft_enabled";
+    private static final String KEY_ENCRYPTED_EMERGENCY_PHONE = "encrypted_emergency_phone";
+    private static final String KEY_ENCRYPTED_ICCID_0 = "encrypted_iccid_slot_0";
+    private static final String KEY_ENCRYPTED_ICCID_1 = "encrypted_iccid_slot_1";
+    
+    // --- NEW: OFFLINE QUEUE (TIME BOMB) KEYS ---
+    private static final String KEY_HAS_PENDING_ALERT = "has_pending_alert";
+    private static final String KEY_PENDING_ALERT_BODY = "pending_alert_body";
 
     private static HFSDatabaseHelper instance;
     private final SharedPreferences prefs;
@@ -164,5 +174,67 @@ public class HFSDatabaseHelper {
 
     public void clearDatabase() {
         prefs.edit().clear().apply();
+    }
+
+    // =========================================================================
+    // --- NEW: ANTI-THEFT, HARDWARE ENCRYPTION & OFFLINE QUEUE LOGIC ---
+    // =========================================================================
+
+    public void setAntiTheftEnabled(boolean enabled) {
+        prefs.edit().putBoolean(KEY_ANTI_THEFT_ENABLED, enabled).apply();
+    }
+
+    public boolean isAntiTheftEnabled() {
+        return prefs.getBoolean(KEY_ANTI_THEFT_ENABLED, false);
+    }
+
+    public void saveEncryptedEmergencyNumber(String encryptedNumber) {
+        prefs.edit().putString(KEY_ENCRYPTED_EMERGENCY_PHONE, encryptedNumber).apply();
+    }
+
+    public String getEncryptedEmergencyNumber() {
+        return prefs.getString(KEY_ENCRYPTED_EMERGENCY_PHONE, null);
+    }
+
+    public void saveEncryptedIccid(int slotIndex, String encryptedIccid) {
+        if (slotIndex == 0) {
+            prefs.edit().putString(KEY_ENCRYPTED_ICCID_0, encryptedIccid).apply();
+        } else if (slotIndex == 1) {
+            prefs.edit().putString(KEY_ENCRYPTED_ICCID_1, encryptedIccid).apply();
+        }
+    }
+
+    public String getEncryptedIccid(int slotIndex) {
+        if (slotIndex == 0) {
+            return prefs.getString(KEY_ENCRYPTED_ICCID_0, null);
+        } else if (slotIndex == 1) {
+            return prefs.getString(KEY_ENCRYPTED_ICCID_1, null);
+        }
+        return null;
+    }
+
+    // --- OFFLINE QUEUE (TIME BOMB) LOGIC ---
+    // Saves a message when no SIM is available to auto-send later.
+
+    public void savePendingMessage(String messageBody) {
+        prefs.edit()
+                .putString(KEY_PENDING_ALERT_BODY, messageBody)
+                .putBoolean(KEY_HAS_PENDING_ALERT, true)
+                .apply();
+    }
+
+    public boolean hasPendingMessage() {
+        return prefs.getBoolean(KEY_HAS_PENDING_ALERT, false);
+    }
+
+    public String getPendingMessage() {
+        return prefs.getString(KEY_PENDING_ALERT_BODY, null);
+    }
+
+    public void clearPendingMessage() {
+        prefs.edit()
+                .remove(KEY_PENDING_ALERT_BODY)
+                .putBoolean(KEY_HAS_PENDING_ALERT, false)
+                .apply();
     }
 }
