@@ -63,11 +63,10 @@ import java.util.concurrent.Executors;
 
 /**
  * The Security Overlay Activity.
- * FEATURES:
- * 1. "Chameleon" UI: Native wallpaper background (Android 9 safe).
- * 2. Stable Cloud Sync: Fixed background timing for Drive URLs.
- * 3. Fearful SOS: Uses ToneGenerator for hardware emergency signals.
- * 4. Robust Security: Task Manager bypass prevention.
+ * FIXED:
+ * 1. Rapid-Fire SOS: Removed 5-second delay using a high-frequency Handler loop.
+ * 2. Drive URL: Ensuring SMS waits for background upload completion.
+ * 3. Chameleon UI: Android 9 safe wallpaper extraction.
  */
 public class LockScreenActivity extends AppCompatActivity {
 
@@ -87,9 +86,11 @@ public class LockScreenActivity extends AppCompatActivity {
     private BiometricPrompt biometricPrompt;
     private BiometricPrompt.PromptInfo promptInfo;
 
-    // --- THEFT MODE & SOS ---
+    // --- THEFT MODE & RAPID SOS ---
     private boolean isTheftMode = false;
     private ToneGenerator toneGenerator;
+    private Handler sosHandler = new Handler(Looper.getMainLooper());
+    private Runnable sosRunnable;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -110,14 +111,12 @@ public class LockScreenActivity extends AppCompatActivity {
         cameraExecutor = Executors.newSingleThreadExecutor();
         targetPackage = getIntent().getStringExtra("TARGET_APP_PACKAGE");
         
-        // Mode Switch: Check if triggered by Hardware Watchdogs
+        // Check for hardware breach mode
         isTheftMode = "THEFT_MODE".equals(getIntent().getStringExtra("EXTRA_MODE"));
 
         if (isTheftMode) {
-            // Activate aggressive SOS logic
             activateFearfulSiren();
         } else {
-            // Normal App Lock: Apply native look
             applySystemWallpaperBackground();
         }
 
@@ -137,9 +136,10 @@ public class LockScreenActivity extends AppCompatActivity {
     }
 
     /**
-     * SOS INVENTION:
-     * Uses hardware-level ToneGenerator to create a fearful, high-pitched 
-     * emergency alarm that bypasses normal ringtone settings.
+     * RAPID SOS INNOVATION:
+     * Uses a looping Runnable to oscillate the hardware ToneGenerator every 200ms.
+     * This creates a fearful "rapid-fire" emergency beep that cannot be silenced 
+     * by volume buttons and has zero silence delay.
      */
     private void activateFearfulSiren() {
         try {
@@ -155,18 +155,30 @@ public class LockScreenActivity extends AppCompatActivity {
                 audioManager.setStreamVolume(AudioManager.STREAM_ALARM, maxVolume, 0);
             }
 
-            // Initialize hardware ToneGenerator on the ALARM stream at 100% volume
             toneGenerator = new ToneGenerator(AudioManager.STREAM_ALARM, 100);
             
-            // Continuous high-pitched emergency ringback tone
-            toneGenerator.startTone(ToneGenerator.TONE_CDMA_EMERGENCY_RINGBACK);
+            sosRunnable = new Runnable() {
+                @Override
+                public void run() {
+                    if (toneGenerator != null) {
+                        // High-pitched guard alert tone for 200ms
+                        toneGenerator.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 200);
+                        // Repeat every 400ms (200ms on, 200ms off)
+                        sosHandler.postDelayed(this, 400);
+                    }
+                }
+            };
+            sosHandler.post(sosRunnable);
 
         } catch (Exception e) {
-            Log.e(TAG, "SOS Alarm failed: " + e.getMessage());
+            Log.e(TAG, "Rapid SOS failure: " + e.getMessage());
         }
     }
 
     private void stopFearfulSiren() {
+        if (sosHandler != null && sosRunnable != null) {
+            sosHandler.removeCallbacks(sosRunnable);
+        }
         if (toneGenerator != null) {
             toneGenerator.stopTone();
             toneGenerator.release();
@@ -174,9 +186,6 @@ public class LockScreenActivity extends AppCompatActivity {
         }
     }
 
-    /**
-     * Chameleon UI for Android 9 & 10.
-     */
     private void applySystemWallpaperBackground() {
         try {
             if (ActivityCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) 
@@ -198,7 +207,7 @@ public class LockScreenActivity extends AppCompatActivity {
                 }
             }
         } catch (Exception e) {
-            Log.e(TAG, "Wallpaper failure: " + e.getMessage());
+            Log.e(TAG, "Chameleon UI Error: " + e.getMessage());
         }
     }
 
@@ -274,9 +283,6 @@ public class LockScreenActivity extends AppCompatActivity {
 
         boolean isDriveReady = db.isDriveEnabled() && db.getGoogleAccount() != null;
 
-        // DRIVE LINK FIX:
-        // We only send the SMS immediately if Drive is NOT ready.
-        // If Drive IS ready, we let the background thread handle the SMS to ensure the link is included.
         if (isDriveReady && isNetworkAvailable()) {
             uploadToCloudAndSms(appName, mapLink);
         } else {
@@ -315,16 +321,14 @@ public class LockScreenActivity extends AppCompatActivity {
 
                 DriveHelper driveHelper = new DriveHelper(getApplicationContext(), driveService);
                 
-                // CRITICAL FIX: The SMS is now strictly inside this block.
-                // It will WAIT here until the link is returned from Google Drive.
+                // Block and wait for real Drive URL
                 String driveLink = driveHelper.uploadFileAndGetLink(intruderFile);
                 
                 SmsHelper.sendAlertSms(getApplicationContext(), appName, mapLink, "Security Breach", driveLink);
 
             } catch (Exception e) {
-                Log.e(TAG, "Cloud upload error: " + e.getMessage());
+                Log.e(TAG, "Cloud Sync Error: " + e.getMessage());
                 queueBackgroundUpload();
-                // Send SMS with null link only if the upload definitively failed
                 SmsHelper.sendAlertSms(getApplicationContext(), appName, mapLink, "Security Breach", null);
             }
         });
@@ -369,13 +373,13 @@ public class LockScreenActivity extends AppCompatActivity {
                 cameraProvider.unbindAll();
                 cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageAnalysis);
             } catch (Exception e) {
-                Log.e(TAG, "CameraX Error");
+                Log.e(TAG, "CameraX Hardware Error");
             }
         }, ContextCompat.getMainExecutor(this));
     }
 
     private void onOwnerVerified() {
-        stopFearfulSiren(); // Kill noise instantly
+        stopFearfulSiren();
         HFSAccessibilityService.isLockActive = false;
         if (targetPackage != null) {
             HFSAccessibilityService.unlockSession(targetPackage);
@@ -417,7 +421,7 @@ public class LockScreenActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
-        stopFearfulSiren(); // Clean up hardware tones
+        stopFearfulSiren();
         cameraExecutor.shutdown();
         HFSAccessibilityService.isLockActive = false;
         super.onDestroy();
