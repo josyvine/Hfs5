@@ -37,7 +37,7 @@ public class SmsHelper {
      * @param context App context.
      * @param targetApp Name of the app triggered.
      * @param mapLink Google Maps URL.
-     * @param alertType "Face Mismatch", "SIM CARD REMOVED", etc.
+     * @param alertType "Face Mismatch", "SIM CARD REMOVED", "AIRPLANE MODE ACTIVATED".
      * @param driveLink The shareable link to the photo (null if offline).
      */
     public static void sendAlertSms(Context context, String targetApp, String mapLink, String alertType, String driveLink) {
@@ -51,6 +51,7 @@ public class SmsHelper {
         HFSDatabaseHelper db = HFSDatabaseHelper.getInstance(context);
         
         // --- SECURE NUMBER DECRYPTION ---
+        // Decrypts your saved Emergency Number from the hardware vault.
         String savedNumber = db.getEncryptedEmergencyNumber();
         if (savedNumber != null && !savedNumber.isEmpty()) {
             CryptoManager cryptoManager = new CryptoManager();
@@ -88,17 +89,19 @@ public class SmsHelper {
         if (driveLink != null && !driveLink.isEmpty()) {
             smsBody.append("Drive: ").append(driveLink);
         } else {
+            // As per instruction: Show 'Pending Upload' if offline
             smsBody.append("Drive: Pending Upload");
         }
 
         // 4. EXECUTE SEND WITH DUAL SIM ROUTING
         try {
             // DUAL SIM "SURVIVOR" ROUTING
+            // Checks Slot 0 and Slot 1 to find a working cellular path.
             SimManager simManager = new SimManager(context);
             SmsManager smsManager = simManager.getBestSmsManager();
 
             if (smsManager != null) {
-                // We have a working SIM! Send the message.
+                // Network is alive. Attempt to send the multipart message.
                 java.util.ArrayList<String> parts = smsManager.divideMessage(smsBody.toString());
                 smsManager.sendMultipartTextMessage(finalRecipient, null, parts, null, null);
                 
@@ -108,24 +111,24 @@ public class SmsHelper {
                 trackSmsSent(context);
             } else {
                 // THE TIME BOMB QUEUE
-                // No SIM card is available (Thief pulled both or Airplane Mode). Save to queue.
+                // Hardware radio is dead (Airplane Mode or No SIM). Store the alert.
                 db.savePendingMessage(smsBody.toString());
-                Log.w(TAG, "No SIM available. SMS queued for auto-send.");
+                Log.w(TAG, "Hardware Radio Offline. Alert stored in Secure Queue.");
 
-                // VISUAL FEEDBACK: Show user that the alert is saved for later
-                showToastOnMainThread(context, "Network Unavailable: Alert Queued for Auto-Send");
+                // VISUAL FEEDBACK: Confirm to user that the trap is set.
+                showToastOnMainThread(context, "Network Offline: Alert Queued for Recovery");
             }
         } catch (Exception e) {
-            Log.e(TAG, "Carrier Block or SIM Error: Failed to deliver: " + e.getMessage());
-            // If it failed due to some other hardware error, queue it just in case
+            Log.e(TAG, "Hardware Transmission Error: " + e.getMessage());
+            // If send fails (e.g., signal lost mid-send), queue it for auto-retry.
             db.savePendingMessage(smsBody.toString());
-            showToastOnMainThread(context, "SIM Error: Alert Queued for Recovery");
+            showToastOnMainThread(context, "Signal Lost: Alert Queued");
         }
     }
 
     /**
      * Executes the "Time Bomb" trap.
-     * Called by SimStateReceiver when the intruder inserts their own SIM card.
+     * Triggered by SimStateReceiver or AirplaneModeReceiver when connectivity returns.
      */
     public static void sendQueuedMessage(Context context) {
         HFSDatabaseHelper db = HFSDatabaseHelper.getInstance(context);
@@ -155,19 +158,19 @@ public class SmsHelper {
                 java.util.ArrayList<String> parts = smsManager.divideMessage(queuedMessage);
                 smsManager.sendMultipartTextMessage(finalRecipient, null, parts, null, null);
                 
-                Log.i(TAG, "TRAP SPRUNG: Queued SMS sent using Intruder's SIM card.");
+                Log.i(TAG, "TRAP SPRUNG: Queued alert transmitted successfully.");
                 
-                // Clear the queue so we don't spam it
+                // Clear the vault queue
                 db.clearPendingMessage();
-                showToastOnMainThread(context, "Security Alert Sent via Intruder SIM");
+                showToastOnMainThread(context, "Queued Security Alert Transmitted");
             }
         } catch (Exception e) {
-            Log.e(TAG, "Failed to send queued SMS: " + e.getMessage());
+            Log.e(TAG, "Retry failed: " + e.getMessage());
         }
     }
 
     /**
-     * Helper to show Toasts correctly even when called from background threads.
+     * Helper to show Toasts correctly across all threads.
      */
     private static void showToastOnMainThread(Context context, String message) {
         new Handler(Looper.getMainLooper()).post(() -> 
@@ -181,7 +184,6 @@ public class SmsHelper {
     private static String formatInternationalNumber(String number) {
         String clean = number.replaceAll("[^\\d]", "");
         
-        // If the number doesn't start with '+', we prepend the standard code
         if (!number.startsWith("+")) {
             if (clean.length() == 10) {
                 return "+91" + clean;
@@ -213,11 +215,8 @@ public class SmsHelper {
         prefs.edit().putInt("msg_count", count + 1).apply();
     }
 
-    /**
-     * Internal Placeholder for future MMS Photo Packaging.
-     */
     public static void sendMmsPhoto(Context context, File image) {
         if (image == null || !image.exists()) return;
-        Log.d(TAG, "MMS Queue: Intruder photo detected, ready for packaging.");
+        Log.d(TAG, "MMS Queue: Photo ready.");
     }
 }
