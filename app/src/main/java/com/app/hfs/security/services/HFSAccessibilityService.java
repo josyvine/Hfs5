@@ -9,7 +9,6 @@ import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.util.Log;
 import android.view.accessibility.AccessibilityEvent;
-import android.view.accessibility.AccessibilityNodeInfo;
 
 import com.hfs.security.ui.LockScreenActivity;
 import com.hfs.security.ui.SystemCaptureActivity;
@@ -58,22 +57,26 @@ public class HFSAccessibilityService extends AccessibilityService {
         super.onServiceConnected();
         db = HFSDatabaseHelper.getInstance(this);
         
-        // Dynamic registration for hardware wake events
+        // REGISTER SCREEN RECEIVER (The Ambush Trigger)
         screenReceiver = new ScreenReceiver();
         IntentFilter filter = new IntentFilter();
         filter.addAction(Intent.ACTION_SCREEN_ON);
         filter.addAction(Intent.ACTION_SCREEN_OFF);
         registerReceiver(screenReceiver, filter);
         
-        Log.d(TAG, "HFS Guard Connected. Monitoring for App Flashes and System Wake.");
+        Log.d(TAG, "HFS Accessibility Service Connected. Screen Monitor Active.");
     }
 
+    /**
+     * Inner Class: Listens for Power Button / Wake events to cover System Lock.
+     */
     private class ScreenReceiver extends BroadcastReceiver {
         @Override
         public void onReceive(Context context, Intent intent) {
             if (intent.getAction() != null && intent.getAction().equals(Intent.ACTION_SCREEN_ON)) {
+                // Check if the user has enabled "Phone Protection" (Now Defaults to TRUE)
                 if (db.isPhoneProtectionEnabled()) {
-                    Log.i(TAG, "Ambush Trigger: Covering System Lock.");
+                    Log.i(TAG, "Screen Woke Up: Triggering Pre-Emptive HFS Lock.");
                     triggerLockOverlay("System Phone Lock");
                 }
             }
@@ -84,42 +87,44 @@ public class HFSAccessibilityService extends AccessibilityService {
     public void onAccessibilityEvent(AccessibilityEvent event) {
         if (event.getPackageName() == null) return;
         String currentPkg = event.getPackageName().toString();
+
         int eventType = event.getEventType();
 
         // ==========================================================
-        // PART 1: ZERO-FLASH DETECTION LOGIC
-        // We monitor Window Changes, Clicks, and Focus to be proactive.
+        // PART 1: NORMAL HFS LOCK LOGIC (For Protected Apps)
+        // FIXED: Added VIEW_CLICKED and VIEW_FOCUSED to stop the "Flash"
         // ==========================================================
         if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED || 
             eventType == AccessibilityEvent.TYPE_VIEW_CLICKED || 
             eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED) {
             
-            // System UI Check
+            // Reset PIN counter if we left the lock screen
             if (!currentPkg.equals("com.android.systemui")) {
                 systemPinAttemptCount = 0;
             }
 
-            // 1. Own App Check
+            // 1. SELF-PROTECTION: Verify if we are already showing the lock screen
             if (currentPkg.equals(getPackageName())) {
                 isLockActive = true;
                 return;
             }
 
-            // 2. Task Manager Bypass Safety
+            // 2. TASK MANAGER BYPASS FIX
             if (isLockActive && !currentPkg.equals(unlockedPackage)) {
-                // Force verification if the app on screen is not the one we just unlocked
+                // Force re-verification
             } else if (isLockActive) {
                 return;
             }
 
-            // 3. Re-Arm Check
+            // 3. RE-ARM LOGIC: If user switched apps, clear the session
             if (!currentPkg.equals(unlockedPackage)) {
                 if (!unlockedPackage.isEmpty()) {
+                    Log.d(TAG, "User switched apps. Security Re-armed.");
                     unlockedPackage = "";
                 }
             }
 
-            // 4. Protection Check (Predictive)
+            // 4. PROTECTION LOGIC (Strict Check)
             Set<String> protectedApps = db.getProtectedPackages();
             if (protectedApps.contains(currentPkg)) {
                 
@@ -127,19 +132,19 @@ public class HFSAccessibilityService extends AccessibilityService {
                         (System.currentTimeMillis() - lastUnlockTimestamp < SESSION_GRACE_MS);
 
                 if (!isSessionValid) {
-                    // Start LockScreenActivity immediately to prevent UI flash
+                    Log.i(TAG, "Security Breach Detected: Immediate Lock for " + currentPkg);
                     triggerLockOverlay(currentPkg);
                 }
             }
         }
 
         // ==========================================================
-        // PART 2: SYSTEM LOCK WATCHER (Biometric Text / PIN)
+        // PART 2: FALLBACK SYSTEM WATCHER (Biometric Text / PIN Clicks)
         // ==========================================================
         if (currentPkg.equals("com.android.systemui")) {
             long currentTime = System.currentTimeMillis();
 
-            // Watch for error text messages appearing on the Lock Screen
+            // A. WATCH FOR TEXT ERRORS (Fingerprint/Face)
             if (eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
                 if (event.getText() != null) {
                     for (CharSequence text : event.getText()) {
@@ -159,7 +164,7 @@ public class HFSAccessibilityService extends AccessibilityService {
                 }
             }
 
-            // Watch for PIN pad interaction (Forced 2-attempt trigger)
+            // B. WATCH FOR PIN CLICKS
             if (eventType == AccessibilityEvent.TYPE_VIEW_CLICKED) {
                 systemPinAttemptCount++;
                 if (systemPinAttemptCount >= 2) {
@@ -175,12 +180,12 @@ public class HFSAccessibilityService extends AccessibilityService {
 
     @Override
     public void onInterrupt() {
-        Log.w(TAG, "HFS Guard Interrupted.");
+        Log.w(TAG, "HFS Accessibility Service Interrupted.");
     }
 
     /**
      * Launches the visible Lock Screen Overlay.
-     * Uses NO_ANIMATION and high-priority flags to stop the target app from flashing.
+     * Added NO_ANIMATION to prevent "Flash".
      */
     private void triggerLockOverlay(String packageName) {
         String appName = getAppNameFromPackage(packageName);
@@ -199,10 +204,13 @@ public class HFSAccessibilityService extends AccessibilityService {
             startActivity(lockIntent);
             isLockActive = true;
         } catch (Exception e) {
-            Log.e(TAG, "Failed to launch overlay: " + e.getMessage());
+            Log.e(TAG, "Failed to launch lock overlay: " + e.getMessage());
         }
     }
 
+    /**
+     * Launches the Invisible Camera Activity (Fallback for System Lock).
+     */
     private void triggerInvisibleSystemCamera() {
         Intent captureIntent = new Intent(this, SystemCaptureActivity.class);
         captureIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK 
@@ -211,12 +219,14 @@ public class HFSAccessibilityService extends AccessibilityService {
         try {
             startActivity(captureIntent);
         } catch (Exception e) {
-            Log.e(TAG, "System capture blocked.");
+            Log.e(TAG, "Failed to launch invisible system capture: " + e.getMessage());
         }
     }
 
     private String getAppNameFromPackage(String packageName) {
-        if (packageName.equals("System Phone Lock")) return "System Phone Lock";
+        if (packageName.equals("System Phone Lock")) {
+            return "System Phone Lock";
+        }
         
         PackageManager pm = getPackageManager();
         try {
@@ -230,8 +240,13 @@ public class HFSAccessibilityService extends AccessibilityService {
     @Override
     public boolean onUnbind(Intent intent) {
         if (screenReceiver != null) {
-            try { unregisterReceiver(screenReceiver); } catch (Exception ignored) {}
+            try {
+                unregisterReceiver(screenReceiver);
+            } catch (Exception e) {
+                Log.e(TAG, "Receiver already unregistered");
+            }
         }
+        Log.w(TAG, "HFS Accessibility Service Unbound.");
         return super.onUnbind(intent);
     }
 }
