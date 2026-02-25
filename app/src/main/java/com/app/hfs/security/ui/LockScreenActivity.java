@@ -67,6 +67,7 @@ import java.util.concurrent.Executors;
  * 1. Rapid-Fire SOS: Removed 5-second delay using a high-frequency Handler loop.
  * 2. Drive URL: Ensuring SMS waits for background upload completion.
  * 3. Chameleon UI: Android 9 safe wallpaper extraction.
+ * 4. Task Manager Bypass: Added onPause and onUserLeaveHint for instant flag reset.
  */
 public class LockScreenActivity extends AppCompatActivity {
 
@@ -411,6 +412,20 @@ public class LockScreenActivity extends AppCompatActivity {
             binding.etPinInput.setText("");
             triggerIntruderAlert();
         }
+    }
+
+    @Override
+    protected void onUserLeaveHint() {
+        super.onUserLeaveHint();
+        // Task Manager Bypass Fix: Wipes flag the exact moment the Home button is pressed
+        HFSAccessibilityService.isLockActive = false;
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        // Task Manager Bypass Fix: Wipes flag immediately when activity loses focus
+        HFSAccessibilityService.isLockActive = false;
     }
 
     @Override
