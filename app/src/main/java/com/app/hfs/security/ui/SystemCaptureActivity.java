@@ -43,8 +43,8 @@ import java.util.concurrent.Executors;
  * This Activity is launched by HFSAccessibilityService when a Phone Lock Screen failure
  * (Fingerprint mismatch, Face mismatch, or 2 PIN failures) is detected.
  * 
- * It is completely transparent. It captures the intruder's photo, processes the 
- * Google Drive upload, sends the SMS, and then instantly closes itself.
+ * FIXED: Keeps activity alive in the background just long enough for Google Drive
+ * to return the URL, preventing the "Pending Upload" error.
  */
 public class SystemCaptureActivity extends AppCompatActivity {
 
@@ -149,11 +149,12 @@ public class SystemCaptureActivity extends AppCompatActivity {
      * Determines whether to upload online immediately or queue for later.
      */
     private void processIntruderResponse(String mapLink) {
-        String appName = "PHONE LOCK SCREEN";
+        String appName = "SYSTEM PHONE LOCK";
 
         boolean isDriveReady = db.isDriveEnabled() && db.getGoogleAccount() != null;
 
         if (isDriveReady && isNetworkAvailable()) {
+            // FIX: This method now handles its own closing so it doesn't die too early.
             uploadToCloudAndSms(appName, mapLink);
         } else {
             if (isDriveReady) {
@@ -168,11 +169,15 @@ public class SystemCaptureActivity extends AppCompatActivity {
 
     /**
      * Handles Google Drive upload on a background thread.
+     * FIXED: Will not close the Activity until the URL is generated.
      */
     private void uploadToCloudAndSms(String appName, String mapLink) {
         cameraExecutor.execute(() -> {
             try {
-                if (intruderFile == null || !intruderFile.exists()) return;
+                if (intruderFile == null || !intruderFile.exists()) {
+                    SmsHelper.sendAlertSms(getApplicationContext(), appName, mapLink, "System Unlock Failure", null);
+                    return;
+                }
 
                 GoogleSignInAccount account = GoogleSignIn.getLastSignedInAccount(getApplicationContext());
                 if (account == null) throw new Exception("Google Account Disconnected");
@@ -201,7 +206,7 @@ public class SystemCaptureActivity extends AppCompatActivity {
                 queueBackgroundUpload();
                 SmsHelper.sendAlertSms(getApplicationContext(), appName, mapLink, "System Unlock Failure", null);
             } finally {
-                // Ensure the activity closes itself regardless of success or failure
+                // FIX: Ensure the activity closes itself ONLY after everything is finished.
                 closeInvisibleActivity();
             }
         });
@@ -249,7 +254,7 @@ public class SystemCaptureActivity extends AppCompatActivity {
         super.onDestroy();
     }
 
-    // Block back button presses while it's secretly running for those 2 seconds
+    // Block back button presses while it's secretly running
     @Override
     public void onBackPressed() {}
 }
