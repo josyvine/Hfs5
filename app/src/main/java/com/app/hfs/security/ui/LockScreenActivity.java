@@ -68,6 +68,7 @@ import java.util.concurrent.Executors;
  * 2. Drive URL: Ensuring SMS waits for background upload completion.
  * 3. Chameleon UI: Android 9 safe wallpaper extraction.
  * 4. Task Manager Bypass: Added onPause and onUserLeaveHint for instant flag reset.
+ * 5. INFINITE LOOP CRASH FIX: Prevents BiometricPrompt from restarting when hardware is locked out.
  */
 public class LockScreenActivity extends AppCompatActivity {
 
@@ -227,15 +228,19 @@ public class LockScreenActivity extends AppCompatActivity {
                 super.onAuthenticationError(errorCode, errString);
                 if (errorCode == BiometricPrompt.ERROR_NEGATIVE_BUTTON) {
                     showSystemCredentialPicker();
+                } else if (errorCode == BiometricPrompt.ERROR_LOCKOUT || errorCode == BiometricPrompt.ERROR_LOCKOUT_PERMANENT) {
+                    // INFINITE LOOP CRASH FIX: 
+                    // Hardware sensor is locked out. We record the breach but DO NOT try to restart the sensor.
+                    triggerIntruderAlert(false);
                 } else if (errorCode != BiometricPrompt.ERROR_USER_CANCELED) {
-                    triggerIntruderAlert();
+                    triggerIntruderAlert(true);
                 }
             }
             
             @Override
             public void onAuthenticationFailed() {
                 super.onAuthenticationFailed();
-                triggerIntruderAlert();
+                triggerIntruderAlert(true);
             }
         });
 
@@ -261,24 +266,35 @@ public class LockScreenActivity extends AppCompatActivity {
         }
     }
 
+    /**
+     * Legacy trigger method for backwards compatibility within this class.
+     */
     private void triggerIntruderAlert() {
+        triggerIntruderAlert(true);
+    }
+
+    /**
+     * Overloaded trigger method. 
+     * @param restartAuth If true, restarts the BiometricPrompt. If false, leaves it disabled.
+     */
+    private void triggerIntruderAlert(boolean restartAuth) {
         if (isActionTaken) return;
         isActionTaken = true;
 
         LocationHelper.getDeviceLocation(this, new LocationHelper.LocationResultCallback() {
             @Override
             public void onLocationFound(String mapLink) {
-                processIntruderResponse(mapLink);
+                processIntruderResponse(mapLink, restartAuth);
             }
 
             @Override
             public void onLocationFailed(String error) {
-                processIntruderResponse("GPS Signal Lost");
+                processIntruderResponse("GPS Signal Lost", restartAuth);
             }
         });
     }
 
-    private void processIntruderResponse(String mapLink) {
+    private void processIntruderResponse(String mapLink, boolean restartAuth) {
         String appName = getIntent().getStringExtra("TARGET_APP_NAME");
         if (appName == null) appName = "Protected Files";
 
@@ -294,7 +310,11 @@ public class LockScreenActivity extends AppCompatActivity {
         runOnUiThread(() -> {
             Toast.makeText(this, "⚠ Security Breach Recorded", Toast.LENGTH_LONG).show();
             isActionTaken = false; 
-            triggerSystemAuth();
+            if (restartAuth) {
+                triggerSystemAuth();
+            } else {
+                Log.w(TAG, "Biometric lockout active. Halting automatic prompt restart to prevent crash.");
+            }
         });
     }
 
