@@ -172,15 +172,6 @@
             </intent-filter>
         </receiver>
 
-        <receiver
-            android:name=".receivers.AirplaneModeReceiver"
-            android:enabled="true"
-            android:exported="true">
-            <intent-filter android:priority="999">
-                <action android:name="android.intent.action.AIRPLANE_MODE" />
-            </intent-filter>
-        </receiver>
-
         <!-- J. FILE PROVIDER -->
         <provider
             android:name="androidx.core.content.FileProvider"
