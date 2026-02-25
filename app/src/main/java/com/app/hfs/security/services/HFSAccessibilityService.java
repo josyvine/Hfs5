@@ -292,4 +292,4 @@ public class HFSAccessibilityService extends AccessibilityService {
         Log.w(TAG, "HFS Accessibility Service Unbound.");
         return super.onUnbind(intent);
     }
-}
+} 
