@@ -7,9 +7,11 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
 import android.util.Log;
 import android.view.accessibility.AccessibilityEvent;
 
+import com.hfs.security.receivers.AirplaneModeReceiver;
 import com.hfs.security.ui.LockScreenActivity;
 import com.hfs.security.ui.SystemCaptureActivity;
 import com.hfs.security.utils.HFSDatabaseHelper;
@@ -24,12 +26,17 @@ import java.util.Set;
  * 1. Predictive Launch: Detects view clicks and focus changes to stop app flashes.
  * 2. Pre-Emptive Ambush: Monitors screen wake events for system lock protection.
  * 3. Self-correcting flags: Prevents apps from opening freely via task manager.
+ * 4. Airplane Mode Bypass: Dynamically registers the receiver to beat Oppo background blocks.
  */
 public class HFSAccessibilityService extends AccessibilityService {
 
     private static final String TAG = "HFS_Accessibility";
     private HFSDatabaseHelper db;
     private ScreenReceiver screenReceiver;
+    private AirplaneModeReceiver airplaneModeReceiver;
+    
+    // Stores the phone's default home screen package name for the failsafe
+    private String launcherPackage = "";
 
     // --- SESSION CONTROL FLAGS ---
     public static boolean isLockActive = false;
@@ -57,6 +64,9 @@ public class HFSAccessibilityService extends AccessibilityService {
         super.onServiceConnected();
         db = HFSDatabaseHelper.getInstance(this);
         
+        // Find out what the phone's home screen package is
+        launcherPackage = getLauncherPackageName();
+        
         // REGISTER SCREEN RECEIVER (The Ambush Trigger)
         screenReceiver = new ScreenReceiver();
         IntentFilter filter = new IntentFilter();
@@ -64,7 +74,26 @@ public class HFSAccessibilityService extends AccessibilityService {
         filter.addAction(Intent.ACTION_SCREEN_OFF);
         registerReceiver(screenReceiver, filter);
         
-        Log.d(TAG, "HFS Accessibility Service Connected. Screen Monitor Active.");
+        // REGISTER AIRPLANE MODE RECEIVER DYNAMICALLY (Oppo Background Block Fix)
+        airplaneModeReceiver = new AirplaneModeReceiver();
+        IntentFilter airplaneFilter = new IntentFilter(Intent.ACTION_AIRPLANE_MODE_CHANGED);
+        registerReceiver(airplaneModeReceiver, airplaneFilter);
+        
+        Log.d(TAG, "HFS Accessibility Service Connected. Screen & Airplane Monitors Active.");
+    }
+
+    /**
+     * Helper to reliably identify the default Home Screen (Launcher) of the device.
+     */
+    private String getLauncherPackageName() {
+        Intent intent = new Intent(Intent.ACTION_MAIN);
+        intent.addCategory(Intent.CATEGORY_HOME);
+        PackageManager pm = getPackageManager();
+        ResolveInfo resolveInfo = pm.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY);
+        if (resolveInfo != null && resolveInfo.activityInfo != null) {
+            return resolveInfo.activityInfo.packageName;
+        }
+        return "";
     }
 
     /**
@@ -89,6 +118,13 @@ public class HFSAccessibilityService extends AccessibilityService {
         String currentPkg = event.getPackageName().toString();
 
         int eventType = event.getEventType();
+        
+        // TASK MANAGER FAILSAFE:
+        // If the user navigates to the Home Screen, instantly wipe the lock flag.
+        // This prevents the "stuck flag" bypass if they rapidly minimize the app.
+        if (currentPkg.equals(launcherPackage) || currentPkg.toLowerCase().contains("launcher")) {
+            isLockActive = false;
+        }
 
         // ==========================================================
         // PART 1: NORMAL HFS LOCK LOGIC (For Protected Apps)
@@ -243,7 +279,14 @@ public class HFSAccessibilityService extends AccessibilityService {
             try {
                 unregisterReceiver(screenReceiver);
             } catch (Exception e) {
-                Log.e(TAG, "Receiver already unregistered");
+                Log.e(TAG, "ScreenReceiver already unregistered");
+            }
+        }
+        if (airplaneModeReceiver != null) {
+            try {
+                unregisterReceiver(airplaneModeReceiver);
+            } catch (Exception e) {
+                Log.e(TAG, "AirplaneModeReceiver already unregistered");
             }
         }
         Log.w(TAG, "HFS Accessibility Service Unbound.");
