@@ -69,7 +69,6 @@ import java.util.concurrent.Executors;
  * 3. Chameleon UI: Android 9 safe wallpaper extraction.
  * 4. Task Manager Bypass: Added onPause and onUserLeaveHint for instant flag reset.
  * 5. INFINITE LOOP CRASH FIX: Prevents BiometricPrompt from restarting when hardware is locked out.
- * 6. OVERLAY SHIELD INTEGRATION: Lifts the impenetrable black curtain once the real UI is ready.
  */
 public class LockScreenActivity extends AppCompatActivity {
 
@@ -136,16 +135,6 @@ public class LockScreenActivity extends AppCompatActivity {
 
         binding.btnUnlockPin.setOnClickListener(v -> checkMpinAndUnlock());
         binding.btnFingerprint.setOnClickListener(v -> triggerSystemAuth());
-        
-        // OVERLAY SHIELD FIX: The UI is now successfully loaded. Lift the black curtain instantly.
-        HFSAccessibilityService.liftCurtain();
-    }
-
-    @Override
-    protected void onResume() {
-        super.onResume();
-        // OVERLAY SHIELD FIX: Ensure curtain is lifted if activity is resumed from background
-        HFSAccessibilityService.liftCurtain();
     }
 
     /**
