@@ -79,9 +79,10 @@
             android:launchMode="singleInstance"
             android:theme="@style/Theme.HFS.Dialog" />
 
-        <!-- D. LOCK SCREEN OVERLAY (UPDATED FOR TASK BINDING) -->
-        <!-- Fixed: Changed launchMode to singleTop and added taskAffinity="" -->
-        <!-- This glues the lock screen to the target app so they open/close together. -->
+        <!-- D. LOCK SCREEN OVERLAY (UPDATED WITH TASK BINDING GLUE) -->
+        <!-- taskAffinity="" glues this screen to the Protected App's task -->
+        <!-- singleTop ensures it refreshes instead of creating duplicates -->
+        <!-- noHistory="false" ensures it stays alive when minimized -->
         <activity
             android:name=".ui.LockScreenActivity"
             android:excludeFromRecents="true"
