@@ -79,12 +79,15 @@
             android:launchMode="singleInstance"
             android:theme="@style/Theme.HFS.Dialog" />
 
-        <!-- D. LOCK SCREEN OVERLAY (UPDATED WITH SIREN MODE LOGIC) -->
+        <!-- D. LOCK SCREEN OVERLAY (UPDATED FOR TASK BINDING) -->
+        <!-- Fixed: Changed launchMode to singleTop and added taskAffinity="" -->
+        <!-- This glues the lock screen to the target app so they open/close together. -->
         <activity
             android:name=".ui.LockScreenActivity"
             android:excludeFromRecents="true"
-            android:launchMode="singleInstance"
-            android:noHistory="true"
+            android:launchMode="singleTop"
+            android:taskAffinity=""
+            android:noHistory="false"
             android:theme="@style/Theme.HFS.LockOverlay"
             android:windowSoftInputMode="stateAlwaysHidden" />
 
