@@ -8,11 +8,7 @@ import android.content.IntentFilter;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
-import android.graphics.Color;
-import android.graphics.PixelFormat;
 import android.util.Log;
-import android.view.View;
-import android.view.WindowManager;
 import android.view.accessibility.AccessibilityEvent;
 
 import com.hfs.security.receivers.AirplaneModeReceiver;
@@ -31,7 +27,7 @@ import java.util.Set;
  * 2. Pre-Emptive Ambush: Monitors screen wake events for system lock protection.
  * 3. Self-correcting flags: Prevents apps from opening freely via task manager.
  * 4. Airplane Mode Bypass: Dynamically registers the receiver to beat Oppo background blocks.
- * 5. OVERLAY SHIELD: Drops an instant, unbreakable black curtain to defeat Android's 5-second Task Manager block.
+ * 5. TASK BINDING: Removed failed Overlay Curtain. Now relies on OS-level Task Affinity gluing.
  */
 public class HFSAccessibilityService extends AccessibilityService {
 
@@ -53,10 +49,6 @@ public class HFSAccessibilityService extends AccessibilityService {
     private int systemPinAttemptCount = 0;
     private long lastSystemAlertTime = 0;
     private static final long SYSTEM_COOLDOWN_MS = 5000; 
-
-    // --- OVERLAY SHIELD (CURTAIN) VARIABLES ---
-    private static WindowManager windowManager;
-    private static View curtainView;
 
     /**
      * Signals that the owner has successfully bypassed the lock (Biometric/PIN).
@@ -121,56 +113,6 @@ public class HFSAccessibilityService extends AccessibilityService {
         }
     }
 
-    // ==========================================================
-    // OVERLAY SHIELD (THE CURTAIN LOGIC)
-    // ==========================================================
-    
-    /**
-     * Instantly drops a pitch-black screen overlay to blind the intruder.
-     * This bypasses the Android "App Switch Grace Period" that delays Activities.
-     */
-    private void dropCurtain() {
-        if (curtainView != null) return; // Curtain is already down
-        
-        try {
-            windowManager = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
-            curtainView = new View(this);
-            curtainView.setBackgroundColor(Color.BLACK); // Completely black to hide the app
-            
-            WindowManager.LayoutParams params = new WindowManager.LayoutParams(
-                    WindowManager.LayoutParams.MATCH_PARENT,
-                    WindowManager.LayoutParams.MATCH_PARENT,
-                    WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, // Highest privilege overlay
-                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE 
-                    | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL 
-                    | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN 
-                    | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-                    PixelFormat.OPAQUE);
-            
-            windowManager.addView(curtainView, params);
-            Log.i(TAG, "Unbreakable Curtain dropped instantly.");
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to drop curtain: " + e.getMessage());
-        }
-    }
-
-    /**
-     * Removes the black overlay. Called by LockScreenActivity the exact millisecond 
-     * the real biometric UI successfully takes control of the screen.
-     */
-    public static void liftCurtain() {
-        if (windowManager != null && curtainView != null) {
-            try {
-                windowManager.removeView(curtainView);
-                Log.i(TAG, "Curtain lifted. Activity has taken control.");
-            } catch (Exception e) {
-                Log.e(TAG, "Failed to lift curtain: " + e.getMessage());
-            }
-            curtainView = null;
-            windowManager = null;
-        }
-    }
-
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
         if (event.getPackageName() == null) return;
@@ -228,10 +170,6 @@ public class HFSAccessibilityService extends AccessibilityService {
 
                 if (!isSessionValid) {
                     Log.i(TAG, "Security Breach Detected: Immediate Lock for " + currentPkg);
-                    
-                    // --- NEW: DROP THE SHIELD BEFORE CALLING THE ACTIVITY ---
-                    dropCurtain(); 
-                    
                     triggerLockOverlay(currentPkg);
                 }
             }
@@ -279,7 +217,6 @@ public class HFSAccessibilityService extends AccessibilityService {
 
     @Override
     public void onInterrupt() {
-        liftCurtain(); // Safety cleanup
         Log.w(TAG, "HFS Accessibility Service Interrupted.");
     }
 
@@ -305,7 +242,6 @@ public class HFSAccessibilityService extends AccessibilityService {
             isLockActive = true;
         } catch (Exception e) {
             Log.e(TAG, "Failed to launch lock overlay: " + e.getMessage());
-            liftCurtain(); // Safety cleanup if launch fails
         }
     }
 
@@ -340,7 +276,6 @@ public class HFSAccessibilityService extends AccessibilityService {
 
     @Override
     public boolean onUnbind(Intent intent) {
-        liftCurtain(); // Safety cleanup
         if (screenReceiver != null) {
             try {
                 unregisterReceiver(screenReceiver);
