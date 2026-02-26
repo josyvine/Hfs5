@@ -27,7 +27,6 @@ import java.util.Set;
  * 2. Pre-Emptive Ambush: Monitors screen wake events for system lock protection.
  * 3. Self-correcting flags: Prevents apps from opening freely via task manager.
  * 4. Airplane Mode Bypass: Dynamically registers the receiver to beat Oppo background blocks.
- * 5. TASK BINDING: Removed failed Overlay Curtain. Now relies on OS-level Task Affinity gluing.
  */
 public class HFSAccessibilityService extends AccessibilityService {
 
