@@ -69,6 +69,7 @@ import java.util.concurrent.Executors;
  * 3. Chameleon UI: Android 9 safe wallpaper extraction.
  * 4. Task Manager Bypass: Added onPause and onUserLeaveHint for instant flag reset.
  * 5. INFINITE LOOP CRASH FIX: Prevents BiometricPrompt from restarting when hardware is locked out.
+ * 6. TASK BINDING SUPPORT: Optimized lifecycle to work with Manifest taskAffinity glue.
  */
 public class LockScreenActivity extends AppCompatActivity {
 
