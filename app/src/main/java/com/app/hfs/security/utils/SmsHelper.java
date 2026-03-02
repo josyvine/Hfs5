@@ -1,16 +1,24 @@
 package com.hfs.security.utils;
 
+import android.Manifest;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.telephony.SmsManager;
+import android.telephony.SubscriptionInfo;
+import android.telephony.SubscriptionManager;
 import android.util.Log;
 import android.widget.Toast;
+
+import androidx.core.app.ActivityCompat;
 
 import java.io.File;
 import java.text.SimpleDateFormat;
 import java.util.Date;
+import java.util.List;
 import java.util.Locale;
 
 /**
@@ -23,6 +31,7 @@ import java.util.Locale;
  * 5. NEW: Uses SimManager for Dual SIM Routing (Survivor Logic).
  * 6. NEW: Queues message if no SIM is available (Time Bomb Trap).
  * 7. NEW: Visual feedback via Toasts for offline queuing status.
+ * 8. NEW: Extracts and includes Intruder's Phone Number in SMS body.
  */
 public class SmsHelper {
 
@@ -51,7 +60,6 @@ public class SmsHelper {
         HFSDatabaseHelper db = HFSDatabaseHelper.getInstance(context);
         
         // --- SECURE NUMBER DECRYPTION ---
-        // Decrypts your saved Emergency Number from the hardware vault.
         String savedNumber = db.getEncryptedEmergencyNumber();
         if (savedNumber != null && !savedNumber.isEmpty()) {
             CryptoManager cryptoManager = new CryptoManager();
@@ -72,11 +80,19 @@ public class SmsHelper {
         // 3. CONSTRUCT ENHANCED ALERT TEXT (Strict Format)
         String time = new SimpleDateFormat("dd-MMM HH:mm", Locale.getDefault()).format(new Date());
         
+        // --- NEW: FETCH INTRUDER NUMBER ---
+        String intruderInfo = getIntruderSimInfo(context);
+
         StringBuilder smsBody = new StringBuilder();
         smsBody.append("⚠ HFS SECURITY ALERT\n");
         smsBody.append("Breach: ").append(alertType).append("\n");
         smsBody.append("App: ").append(targetApp).append("\n");
         smsBody.append("Time: ").append(time).append("\n");
+        
+        // Add Intruder's details if available
+        if (!intruderInfo.isEmpty()) {
+            smsBody.append(intruderInfo).append("\n");
+        }
 
         // Map Link Logic
         if (mapLink != null && !mapLink.isEmpty()) {
@@ -96,12 +112,11 @@ public class SmsHelper {
         // 4. EXECUTE SEND WITH DUAL SIM ROUTING
         try {
             // DUAL SIM "SURVIVOR" ROUTING
-            // Checks Slot 0 and Slot 1 to find a working cellular path.
             SimManager simManager = new SimManager(context);
             SmsManager smsManager = simManager.getBestSmsManager();
 
             if (smsManager != null) {
-                // Network is alive. Attempt to send the multipart message.
+                // We have a working SIM! Send the message.
                 java.util.ArrayList<String> parts = smsManager.divideMessage(smsBody.toString());
                 smsManager.sendMultipartTextMessage(finalRecipient, null, parts, null, null);
                 
@@ -113,22 +128,22 @@ public class SmsHelper {
                 // THE TIME BOMB QUEUE
                 // Hardware radio is dead (Airplane Mode or No SIM). Store the alert.
                 db.savePendingMessage(smsBody.toString());
-                Log.w(TAG, "Hardware Radio Offline. Alert stored in Secure Queue.");
+                Log.w(TAG, "No SIM available. SMS queued for auto-send.");
 
-                // VISUAL FEEDBACK: Confirm to user that the trap is set.
-                showToastOnMainThread(context, "Network Offline: Alert Queued for Recovery");
+                // VISUAL FEEDBACK: Show user that the alert is saved for later
+                showToastOnMainThread(context, "Network Unavailable: Alert Queued for Auto-Send");
             }
         } catch (Exception e) {
-            Log.e(TAG, "Hardware Transmission Error: " + e.getMessage());
-            // If send fails (e.g., signal lost mid-send), queue it for auto-retry.
+            Log.e(TAG, "Carrier Block or SIM Error: Failed to deliver: " + e.getMessage());
+            // If it failed due to some other hardware error, queue it just in case
             db.savePendingMessage(smsBody.toString());
-            showToastOnMainThread(context, "Signal Lost: Alert Queued");
+            showToastOnMainThread(context, "SIM Error: Alert Queued for Recovery");
         }
     }
 
     /**
      * Executes the "Time Bomb" trap.
-     * Triggered by SimStateReceiver or AirplaneModeReceiver when connectivity returns.
+     * Called by SimStateReceiver when the intruder inserts their own SIM card.
      */
     public static void sendQueuedMessage(Context context) {
         HFSDatabaseHelper db = HFSDatabaseHelper.getInstance(context);
@@ -158,19 +173,48 @@ public class SmsHelper {
                 java.util.ArrayList<String> parts = smsManager.divideMessage(queuedMessage);
                 smsManager.sendMultipartTextMessage(finalRecipient, null, parts, null, null);
                 
-                Log.i(TAG, "TRAP SPRUNG: Queued alert transmitted successfully.");
+                Log.i(TAG, "TRAP SPRUNG: Queued SMS sent using Intruder's SIM card.");
                 
-                // Clear the vault queue
+                // Clear the queue so we don't spam it
                 db.clearPendingMessage();
-                showToastOnMainThread(context, "Queued Security Alert Transmitted");
+                showToastOnMainThread(context, "Security Alert Sent via Intruder SIM");
             }
         } catch (Exception e) {
-            Log.e(TAG, "Retry failed: " + e.getMessage());
+            Log.e(TAG, "Failed to send queued SMS: " + e.getMessage());
         }
     }
 
     /**
-     * Helper to show Toasts correctly across all threads.
+     * EXTRACT INTRUDER NUMBER:
+     * Attempts to read the Line 1 Number from the active SIMs.
+     */
+    private static String getIntruderSimInfo(Context context) {
+        if (ActivityCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) {
+            return "";
+        }
+
+        StringBuilder info = new StringBuilder();
+        try {
+            SubscriptionManager sm = (SubscriptionManager) context.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE);
+            List<SubscriptionInfo> activeSims = sm.getActiveSubscriptionInfoList();
+            
+            if (activeSims != null) {
+                for (SubscriptionInfo sim : activeSims) {
+                    // Try to get the number (Requires READ_PHONE_NUMBERS on Android 11+)
+                    String number = sim.getNumber(); 
+                    if (number != null && !number.isEmpty()) {
+                        info.append("Intruder ID (Slot ").append(sim.getSimSlotIndex() + 1).append("): ").append(number).append(" ");
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Could not read intruder number: " + e.getMessage());
+        }
+        return info.toString();
+    }
+
+    /**
+     * Helper to show Toasts correctly even when called from background threads.
      */
     private static void showToastOnMainThread(Context context, String message) {
         new Handler(Looper.getMainLooper()).post(() -> 
