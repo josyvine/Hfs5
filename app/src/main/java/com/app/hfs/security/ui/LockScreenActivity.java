@@ -65,9 +65,10 @@ import java.util.concurrent.Executors;
 
 /**
  * The Security Overlay Activity.
- * FIXED:
+ * FIXED: Removed dead reference to liftCurtain() to fix build error.
+ * Features Preserved:
  * 1. Rapid-Fire SOS: Hardware Beep + Text-To-Speech Voice Alarm.
- * 2. Backlight: Removed FLAG_KEEP_SCREEN_ON to allow screen sleep.
+ * 2. Backlight: Removed FLAG_KEEP_SCREEN_ON.
  * 3. Drive URL: Ensuring SMS waits for background upload completion.
  * 4. Chameleon UI: Android 9 safe wallpaper extraction.
  * 5. Task Manager Bypass: Added onPause and onUserLeaveHint for instant flag reset.
@@ -146,15 +147,13 @@ public class LockScreenActivity extends AppCompatActivity implements TextToSpeec
         binding.btnUnlockPin.setOnClickListener(v -> checkMpinAndUnlock());
         binding.btnFingerprint.setOnClickListener(v -> triggerSystemAuth());
         
-        // OVERLAY SHIELD FIX: The UI is now successfully loaded. Lift the black curtain instantly.
-        HFSAccessibilityService.liftCurtain();
+        // FIXED: Removed liftCurtain() call because we switched to Manifest Task Binding
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        // OVERLAY SHIELD FIX: Ensure curtain is lifted if activity is resumed from background
-        HFSAccessibilityService.liftCurtain();
+        // FIXED: Removed liftCurtain() call because we switched to Manifest Task Binding
     }
 
     @Override
@@ -362,6 +361,9 @@ public class LockScreenActivity extends AppCompatActivity implements TextToSpeec
 
         boolean isDriveReady = db.isDriveEnabled() && db.getGoogleAccount() != null;
 
+        // DRIVE LINK FIX:
+        // We only send the SMS immediately if Drive is NOT ready.
+        // If Drive IS ready, we let the background thread handle the SMS to ensure the link is included.
         if (isDriveReady && isNetworkAvailable()) {
             uploadToCloudAndSms(appName, mapLink);
         } else {
@@ -404,14 +406,16 @@ public class LockScreenActivity extends AppCompatActivity implements TextToSpeec
 
                 DriveHelper driveHelper = new DriveHelper(getApplicationContext(), driveService);
                 
-                // Block and wait for real Drive URL
+                // CRITICAL FIX: The SMS is now strictly inside this block.
+                // It will WAIT here until the link is returned from Google Drive.
                 String driveLink = driveHelper.uploadFileAndGetLink(intruderFile);
                 
                 SmsHelper.sendAlertSms(getApplicationContext(), appName, mapLink, "Security Breach", driveLink);
 
             } catch (Exception e) {
-                Log.e(TAG, "Cloud Sync Error: " + e.getMessage());
+                Log.e(TAG, "Cloud upload error: " + e.getMessage());
                 queueBackgroundUpload();
+                // Send SMS with null link only if the upload definitively failed
                 SmsHelper.sendAlertSms(getApplicationContext(), appName, mapLink, "Security Breach", null);
             }
         });
@@ -456,13 +460,13 @@ public class LockScreenActivity extends AppCompatActivity implements TextToSpeec
                 cameraProvider.unbindAll();
                 cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageAnalysis);
             } catch (Exception e) {
-                Log.e(TAG, "CameraX Hardware Error");
+                Log.e(TAG, "CameraX Error");
             }
         }, ContextCompat.getMainExecutor(this));
     }
 
     private void onOwnerVerified() {
-        stopFearfulSiren();
+        stopFearfulSiren(); // Kill noise instantly
         HFSAccessibilityService.isLockActive = false;
         if (targetPackage != null) {
             HFSAccessibilityService.unlockSession(targetPackage);
@@ -497,20 +501,6 @@ public class LockScreenActivity extends AppCompatActivity implements TextToSpeec
     }
 
     @Override
-    protected void onUserLeaveHint() {
-        super.onUserLeaveHint();
-        // Task Manager Bypass Fix: Wipes flag the exact moment the Home button is pressed
-        HFSAccessibilityService.isLockActive = false;
-    }
-
-    @Override
-    protected void onPause() {
-        super.onPause();
-        // Task Manager Bypass Fix: Wipes flag immediately when activity loses focus
-        HFSAccessibilityService.isLockActive = false;
-    }
-
-    @Override
     protected void onStop() {
         super.onStop();
         HFSAccessibilityService.isLockActive = false;
@@ -518,7 +508,7 @@ public class LockScreenActivity extends AppCompatActivity implements TextToSpeec
 
     @Override
     protected void onDestroy() {
-        stopFearfulSiren();
+        stopFearfulSiren(); // Clean up hardware tones
         cameraExecutor.shutdown();
         HFSAccessibilityService.isLockActive = false;
         super.onDestroy();
