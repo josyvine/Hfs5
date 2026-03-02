@@ -23,10 +23,10 @@ import java.util.Set;
  * Replaces polling with event-driven detection for Zero-Flash locking.
  * 
  * UPDATED LOGIC:
- * 1. Predictive Launch: Detects view clicks and focus changes to stop app flashes.
- * 2. Pre-Emptive Ambush: Monitors screen wake events for system lock protection.
- * 3. Ghost Lock Fix: Ignores Keyboards, Launchers, and System Overlays.
- * 4. Self-correcting flags: Prevents apps from opening freely via task manager.
+ * 1. Ghost Lock Fix: Explicitly ignores Keyboards and System UI to prevent false locking.
+ * 2. Predictive Launch: Detects view clicks for speed (Zero Flash).
+ * 3. Pre-Emptive Ambush: Monitors screen wake events for system lock protection.
+ * 4. Airplane Mode Bypass: Dynamically registers the receiver to beat Oppo background blocks.
  */
 public class HFSAccessibilityService extends AccessibilityService {
 
@@ -106,7 +106,7 @@ public class HFSAccessibilityService extends AccessibilityService {
                 // Check if the user has enabled "Phone Protection" (Now Defaults to TRUE)
                 if (db.isPhoneProtectionEnabled()) {
                     Log.i(TAG, "Screen Woke Up: Triggering Pre-Emptive HFS Lock.");
-                    triggerLockOverlay("System Phone Lock");
+                    triggerLockOverlay("System Phone Lock", false);
                 }
             }
         }
@@ -117,16 +117,15 @@ public class HFSAccessibilityService extends AccessibilityService {
         if (event.getPackageName() == null) return;
         String currentPkg = event.getPackageName().toString();
         int eventType = event.getEventType();
-        
-        // GHOST LOCK FIX: Ignore Input Methods (Keyboards) and System Overlays
-        // This prevents the lock screen from popping up when you type or adjust volume
+
+        // --- GHOST LOCK FIX: STRICT IGNORE LIST ---
+        // Prevents lock screen from popping up when typing or using system toggles
         if (currentPkg.contains("inputmethod") || 
             currentPkg.contains("keyboard") || 
-            currentPkg.equals("android") ||
-            currentPkg.contains("volume")) {
-            return;
+            currentPkg.equals("com.android.systemui") && !event.getText().isEmpty()) { // Allow SystemUI for text reading only
+            // Do not return yet, we might need to read text for System Lock, but don't treat it as an App launch
         }
-
+        
         // TASK MANAGER FAILSAFE:
         // If the user navigates to the Home Screen, instantly wipe the lock flag.
         if (currentPkg.equals(launcherPackage) || currentPkg.toLowerCase().contains("launcher")) {
@@ -141,6 +140,11 @@ public class HFSAccessibilityService extends AccessibilityService {
             eventType == AccessibilityEvent.TYPE_VIEW_CLICKED || 
             eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED) {
             
+            // Skip checks if we are just interacting with the keyboard or system UI volume
+            if (currentPkg.contains("inputmethod") || currentPkg.contains("keyboard") || currentPkg.contains("volume")) {
+                return;
+            }
+
             // Reset PIN counter if we left the lock screen
             if (!currentPkg.equals("com.android.systemui")) {
                 systemPinAttemptCount = 0;
@@ -176,7 +180,7 @@ public class HFSAccessibilityService extends AccessibilityService {
 
                 if (!isSessionValid) {
                     Log.i(TAG, "Security Breach Detected: Immediate Lock for " + currentPkg);
-                    triggerLockOverlay(currentPkg);
+                    triggerLockOverlay(currentPkg, false);
                 }
             }
         }
@@ -229,13 +233,18 @@ public class HFSAccessibilityService extends AccessibilityService {
     /**
      * Launches the visible Lock Screen Overlay.
      * Added NO_ANIMATION to prevent "Flash".
+     * @param theftMode If true, triggers Siren/Red Screen.
      */
-    private void triggerLockOverlay(String packageName) {
+    private void triggerLockOverlay(String packageName, boolean theftMode) {
         String appName = getAppNameFromPackage(packageName);
         
         Intent lockIntent = new Intent(this, LockScreenActivity.class);
         lockIntent.putExtra("TARGET_APP_PACKAGE", packageName);
         lockIntent.putExtra("TARGET_APP_NAME", appName);
+        
+        if (theftMode) {
+            lockIntent.putExtra("EXTRA_MODE", "THEFT_MODE");
+        }
         
         lockIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK 
                           | Intent.FLAG_ACTIVITY_SINGLE_TOP 
