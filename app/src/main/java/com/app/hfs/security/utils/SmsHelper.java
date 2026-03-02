@@ -27,11 +27,11 @@ import java.util.Locale;
  * 1. Includes Google Drive shareable link in the alert content.
  * 2. Implements "Pending Upload" status for offline scenarios.
  * 3. Strictly follows the 3-msg/5-min cooldown and +91 formatting rules.
- * 4. NEW: Decrypts emergency number securely in memory.
- * 5. NEW: Uses SimManager for Dual SIM Routing (Survivor Logic).
- * 6. NEW: Queues message if no SIM is available (Time Bomb Trap).
- * 7. NEW: Visual feedback via Toasts for offline queuing status.
- * 8. NEW: Extracts and includes Intruder's Phone Number in SMS body.
+ * 4. Decrypts emergency number securely in memory.
+ * 5. Uses SimManager for Dual SIM Routing (Survivor Logic).
+ * 6. Queues message if no SIM is available (Time Bomb Trap).
+ * 7. Visual feedback via Toasts for offline queuing status.
+ * 8. NEW: Extracts Intruder's Phone Number from the active SIM card.
  */
 public class SmsHelper {
 
@@ -60,6 +60,7 @@ public class SmsHelper {
         HFSDatabaseHelper db = HFSDatabaseHelper.getInstance(context);
         
         // --- SECURE NUMBER DECRYPTION ---
+        // Decrypts your saved Emergency Number from the hardware vault.
         String savedNumber = db.getEncryptedEmergencyNumber();
         if (savedNumber != null && !savedNumber.isEmpty()) {
             CryptoManager cryptoManager = new CryptoManager();
@@ -80,19 +81,20 @@ public class SmsHelper {
         // 3. CONSTRUCT ENHANCED ALERT TEXT (Strict Format)
         String time = new SimpleDateFormat("dd-MMM HH:mm", Locale.getDefault()).format(new Date());
         
-        // --- NEW: FETCH INTRUDER NUMBER ---
-        String intruderInfo = getIntruderSimInfo(context);
+        // --- NEW: ATTEMPT TO EXTRACT INTRUDER'S NUMBER ---
+        String intruderNumberInfo = getIntruderPhoneNumber(context);
 
         StringBuilder smsBody = new StringBuilder();
         smsBody.append("⚠ HFS SECURITY ALERT\n");
         smsBody.append("Breach: ").append(alertType).append("\n");
         smsBody.append("App: ").append(targetApp).append("\n");
-        smsBody.append("Time: ").append(time).append("\n");
         
-        // Add Intruder's details if available
-        if (!intruderInfo.isEmpty()) {
-            smsBody.append(intruderInfo).append("\n");
+        // Append Intruder Number if found
+        if (!intruderNumberInfo.isEmpty()) {
+            smsBody.append(intruderNumberInfo).append("\n");
         }
+
+        smsBody.append("Time: ").append(time).append("\n");
 
         // Map Link Logic
         if (mapLink != null && !mapLink.isEmpty()) {
@@ -112,6 +114,7 @@ public class SmsHelper {
         // 4. EXECUTE SEND WITH DUAL SIM ROUTING
         try {
             // DUAL SIM "SURVIVOR" ROUTING
+            // Checks Slot 0 and Slot 1 to find a working cellular path.
             SimManager simManager = new SimManager(context);
             SmsManager smsManager = simManager.getBestSmsManager();
 
@@ -130,7 +133,7 @@ public class SmsHelper {
                 db.savePendingMessage(smsBody.toString());
                 Log.w(TAG, "No SIM available. SMS queued for auto-send.");
 
-                // VISUAL FEEDBACK: Show user that the alert is saved for later
+                // VISUAL FEEDBACK: Confirm to user that the trap is set.
                 showToastOnMainThread(context, "Network Unavailable: Alert Queued for Auto-Send");
             }
         } catch (Exception e) {
@@ -143,7 +146,7 @@ public class SmsHelper {
 
     /**
      * Executes the "Time Bomb" trap.
-     * Called by SimStateReceiver when the intruder inserts their own SIM card.
+     * Triggered by SimStateReceiver or AirplaneModeReceiver when connectivity returns.
      */
     public static void sendQueuedMessage(Context context) {
         HFSDatabaseHelper db = HFSDatabaseHelper.getInstance(context);
@@ -173,42 +176,49 @@ public class SmsHelper {
                 java.util.ArrayList<String> parts = smsManager.divideMessage(queuedMessage);
                 smsManager.sendMultipartTextMessage(finalRecipient, null, parts, null, null);
                 
-                Log.i(TAG, "TRAP SPRUNG: Queued SMS sent using Intruder's SIM card.");
+                Log.i(TAG, "TRAP SPRUNG: Queued alert transmitted successfully.");
                 
-                // Clear the queue so we don't spam it
+                // Clear the vault queue
                 db.clearPendingMessage();
-                showToastOnMainThread(context, "Security Alert Sent via Intruder SIM");
+                showToastOnMainThread(context, "Queued Security Alert Transmitted");
             }
         } catch (Exception e) {
-            Log.e(TAG, "Failed to send queued SMS: " + e.getMessage());
+            Log.e(TAG, "Retry failed: " + e.getMessage());
         }
     }
 
     /**
-     * EXTRACT INTRUDER NUMBER:
-     * Attempts to read the Line 1 Number from the active SIMs.
+     * NEW: Extracts the phone number from the currently inserted SIM card.
+     * This is useful to identify the intruder if they inserted their own SIM.
      */
-    private static String getIntruderSimInfo(Context context) {
+    private static String getIntruderPhoneNumber(Context context) {
         if (ActivityCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) {
             return "";
+        }
+
+        // On Android 11+, we also need READ_PHONE_NUMBERS
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            if (ActivityCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_NUMBERS) != PackageManager.PERMISSION_GRANTED) {
+                return "";
+            }
         }
 
         StringBuilder info = new StringBuilder();
         try {
             SubscriptionManager sm = (SubscriptionManager) context.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE);
             List<SubscriptionInfo> activeSims = sm.getActiveSubscriptionInfoList();
-            
-            if (activeSims != null) {
+
+            if (activeSims != null && !activeSims.isEmpty()) {
                 for (SubscriptionInfo sim : activeSims) {
-                    // Try to get the number (Requires READ_PHONE_NUMBERS on Android 11+)
-                    String number = sim.getNumber(); 
+                    // Try to get the number stored on the SIM card
+                    String number = sim.getNumber();
                     if (number != null && !number.isEmpty()) {
-                        info.append("Intruder ID (Slot ").append(sim.getSimSlotIndex() + 1).append("): ").append(number).append(" ");
+                        info.append("Intruder SIM: ").append(number).append(" ");
                     }
                 }
             }
         } catch (Exception e) {
-            Log.e(TAG, "Could not read intruder number: " + e.getMessage());
+            Log.e(TAG, "Could not extract Intruder SIM number: " + e.getMessage());
         }
         return info.toString();
     }
@@ -259,8 +269,11 @@ public class SmsHelper {
         prefs.edit().putInt("msg_count", count + 1).apply();
     }
 
+    /**
+     * Internal Placeholder for future MMS Photo Packaging.
+     */
     public static void sendMmsPhoto(Context context, File image) {
         if (image == null || !image.exists()) return;
-        Log.d(TAG, "MMS Queue: Photo ready.");
+        Log.d(TAG, "MMS Queue: Intruder photo detected, ready for packaging.");
     }
 }
