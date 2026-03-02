@@ -25,8 +25,8 @@ import java.util.Set;
  * UPDATED LOGIC:
  * 1. Predictive Launch: Detects view clicks and focus changes to stop app flashes.
  * 2. Pre-Emptive Ambush: Monitors screen wake events for system lock protection.
- * 3. Self-correcting flags: Prevents apps from opening freely via task manager.
- * 4. Airplane Mode Bypass: Dynamically registers the receiver to beat Oppo background blocks.
+ * 3. Ghost Lock Fix: Ignores Keyboards, Launchers, and System Overlays.
+ * 4. Self-correcting flags: Prevents apps from opening freely via task manager.
  */
 public class HFSAccessibilityService extends AccessibilityService {
 
@@ -116,12 +116,19 @@ public class HFSAccessibilityService extends AccessibilityService {
     public void onAccessibilityEvent(AccessibilityEvent event) {
         if (event.getPackageName() == null) return;
         String currentPkg = event.getPackageName().toString();
-
         int eventType = event.getEventType();
         
+        // GHOST LOCK FIX: Ignore Input Methods (Keyboards) and System Overlays
+        // This prevents the lock screen from popping up when you type or adjust volume
+        if (currentPkg.contains("inputmethod") || 
+            currentPkg.contains("keyboard") || 
+            currentPkg.equals("android") ||
+            currentPkg.contains("volume")) {
+            return;
+        }
+
         // TASK MANAGER FAILSAFE:
         // If the user navigates to the Home Screen, instantly wipe the lock flag.
-        // This prevents the "stuck flag" bypass if they rapidly minimize the app.
         if (currentPkg.equals(launcherPackage) || currentPkg.toLowerCase().contains("launcher")) {
             isLockActive = false;
         }
@@ -292,4 +299,4 @@ public class HFSAccessibilityService extends AccessibilityService {
         Log.w(TAG, "HFS Accessibility Service Unbound.");
         return super.onUnbind(intent);
     }
-} 
+}
