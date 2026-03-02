@@ -16,6 +16,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.speech.tts.TextToSpeech;
 import android.util.Log;
 import android.view.View;
 import android.view.WindowManager;
@@ -56,6 +57,7 @@ import com.hfs.security.utils.SmsHelper;
 
 import java.io.File;
 import java.util.Collections;
+import java.util.Locale;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
@@ -64,14 +66,13 @@ import java.util.concurrent.Executors;
 /**
  * The Security Overlay Activity.
  * FIXED:
- * 1. Rapid-Fire SOS: Removed 5-second delay using a high-frequency Handler loop.
- * 2. Drive URL: Ensuring SMS waits for background upload completion.
- * 3. Chameleon UI: Android 9 safe wallpaper extraction.
- * 4. Task Manager Bypass: Added onPause and onUserLeaveHint for instant flag reset.
- * 5. INFINITE LOOP CRASH FIX: Prevents BiometricPrompt from restarting when hardware is locked out.
- * 6. TASK BINDING SUPPORT: Optimized lifecycle to work with Manifest taskAffinity glue.
+ * 1. Rapid-Fire SOS: Hardware Beep + Text-To-Speech Voice Alarm.
+ * 2. Backlight: Removed FLAG_KEEP_SCREEN_ON to allow screen sleep.
+ * 3. Drive URL: Ensuring SMS waits for background upload completion.
+ * 4. Chameleon UI: Android 9 safe wallpaper extraction.
+ * 5. Task Manager Bypass: Added onPause and onUserLeaveHint for instant flag reset.
  */
-public class LockScreenActivity extends AppCompatActivity {
+public class LockScreenActivity extends AppCompatActivity implements TextToSpeech.OnInitListener {
 
     private static final String TAG = "HFS_LockScreen";
     private static final int SYSTEM_CREDENTIAL_REQUEST_CODE = 505;
@@ -94,6 +95,11 @@ public class LockScreenActivity extends AppCompatActivity {
     private ToneGenerator toneGenerator;
     private Handler sosHandler = new Handler(Looper.getMainLooper());
     private Runnable sosRunnable;
+    
+    // --- VOICE ALARM ---
+    private TextToSpeech textToSpeech;
+    private Handler voiceHandler = new Handler(Looper.getMainLooper());
+    private Runnable voiceRunnable;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -102,9 +108,9 @@ public class LockScreenActivity extends AppCompatActivity {
         // Notify Service that lock screen is active
         HFSAccessibilityService.isLockActive = true;
 
+        // UPDATED FLAGS: Removed FLAG_KEEP_SCREEN_ON so backlight can turn off naturally
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
                 | WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
-                | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
                 | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON);
 
         binding = ActivityLockScreenBinding.inflate(getLayoutInflater());
@@ -114,6 +120,9 @@ public class LockScreenActivity extends AppCompatActivity {
         cameraExecutor = Executors.newSingleThreadExecutor();
         targetPackage = getIntent().getStringExtra("TARGET_APP_PACKAGE");
         
+        // Initialize Text-To-Speech Engine
+        textToSpeech = new TextToSpeech(this, this);
+
         // Check for hardware breach mode
         isTheftMode = "THEFT_MODE".equals(getIntent().getStringExtra("EXTRA_MODE"));
 
@@ -136,13 +145,37 @@ public class LockScreenActivity extends AppCompatActivity {
 
         binding.btnUnlockPin.setOnClickListener(v -> checkMpinAndUnlock());
         binding.btnFingerprint.setOnClickListener(v -> triggerSystemAuth());
+        
+        // OVERLAY SHIELD FIX: The UI is now successfully loaded. Lift the black curtain instantly.
+        HFSAccessibilityService.liftCurtain();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // OVERLAY SHIELD FIX: Ensure curtain is lifted if activity is resumed from background
+        HFSAccessibilityService.liftCurtain();
+    }
+
+    @Override
+    public void onInit(int status) {
+        if (status == TextToSpeech.SUCCESS) {
+            int result = textToSpeech.setLanguage(Locale.US);
+            if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
+                Log.e(TAG, "TTS Language not supported");
+            } else {
+                // If Theft Mode is active, start speaking immediately upon init
+                if (isTheftMode) {
+                    startVoiceLoop();
+                }
+            }
+        }
     }
 
     /**
      * RAPID SOS INNOVATION:
-     * Uses a looping Runnable to oscillate the hardware ToneGenerator every 200ms.
-     * This creates a fearful "rapid-fire" emergency beep that cannot be silenced 
-     * by volume buttons and has zero silence delay.
+     * 1. Oscillates Hardware ToneGenerator every 200ms (High Pitch).
+     * 2. Interleaves Text-To-Speech Voice Alert every 3 seconds.
      */
     private void activateFearfulSiren() {
         try {
@@ -160,6 +193,7 @@ public class LockScreenActivity extends AppCompatActivity {
 
             toneGenerator = new ToneGenerator(AudioManager.STREAM_ALARM, 100);
             
+            // Part 1: The Beep (Rapid Fire)
             sosRunnable = new Runnable() {
                 @Override
                 public void run() {
@@ -173,19 +207,46 @@ public class LockScreenActivity extends AppCompatActivity {
             };
             sosHandler.post(sosRunnable);
 
+            // Part 2: The Voice (Started in onInit or here if ready)
+            startVoiceLoop();
+
         } catch (Exception e) {
             Log.e(TAG, "Rapid SOS failure: " + e.getMessage());
         }
+    }
+
+    private void startVoiceLoop() {
+        if (textToSpeech == null || voiceRunnable != null) return;
+        
+        voiceRunnable = new Runnable() {
+            @Override
+            public void run() {
+                if (textToSpeech != null && !isFinishing()) {
+                    textToSpeech.speak("Security Breach Detected. Intruder Alert.", TextToSpeech.QUEUE_FLUSH, null, null);
+                    // Speak every 3.5 seconds to allow beeps in between
+                    voiceHandler.postDelayed(this, 3500);
+                }
+            }
+        };
+        voiceHandler.post(voiceRunnable);
     }
 
     private void stopFearfulSiren() {
         if (sosHandler != null && sosRunnable != null) {
             sosHandler.removeCallbacks(sosRunnable);
         }
+        if (voiceHandler != null && voiceRunnable != null) {
+            voiceHandler.removeCallbacks(voiceRunnable);
+        }
         if (toneGenerator != null) {
             toneGenerator.stopTone();
             toneGenerator.release();
             toneGenerator = null;
+        }
+        if (textToSpeech != null) {
+            textToSpeech.stop();
+            textToSpeech.shutdown();
+            textToSpeech = null;
         }
     }
 
